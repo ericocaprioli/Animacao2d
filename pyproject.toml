@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "animacao2d"
+version = "0.1.0"
+description = "Roteiro, prompts de cenas e animações 2D simples para vídeos explicativos de tecnologia no YouTube"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=1.8",
+    "numpy>=1.24",
+    "pillow>=10.0",
+    "opencv-python-headless>=4.8",
+    "imageio-ffmpeg>=0.4.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+animacao2d = "animacao2d.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["animacao2d*"]
+
+[tool.setuptools.package-data]
+animacao2d = ["editor/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

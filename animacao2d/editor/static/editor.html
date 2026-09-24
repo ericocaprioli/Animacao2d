@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animacao2d · Editor</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --fundo: #15171c; --painel: #1d2027; --painel2: #252933; --borda: #323744;
+    --texto: #e8eaf0; --suave: #9aa1b2; --destaque: #ffb23f; --ok: #45c47b; --erro: #ff6b5f;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--fundo); color: var(--texto);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  .app { display: grid; grid-template-columns: 210px 1fr 340px; grid-template-rows: 48px 1fr; height: 100vh; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    background: var(--painel); border-bottom: 1px solid var(--borda); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header .titulo { color: var(--suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header .espaco { flex: 1; }
+  #status { color: var(--suave); font-size: 13px; }
+  #status.erro { color: var(--erro); } #status.ok { color: var(--ok); }
+  aside { background: var(--painel); border-right: 1px solid var(--borda); overflow-y: auto; }
+  aside .busca { padding: 10px; position: sticky; top: 0; background: var(--painel); }
+  aside input { width: 100%; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--borda); background: var(--fundo); }
+  .cena { display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer; border-left: 3px solid transparent; }
+  .cena:hover { background: var(--painel2); }
+  .cena.ativa { background: var(--painel2); border-left-color: var(--destaque); }
+  .cena.sem-imagem { opacity: .45; cursor: default; }
+  .cena .nome { flex: 1; font-variant-numeric: tabular-nums; }
+  .selo { font-size: 10.5px; padding: 1px 6px; border-radius: 99px; background: var(--borda); color: var(--suave); }
+  .selo.v { background: #1f4d34; color: #9ff0c0; } .selo.a { background: #4b3a14; color: #ffd98f; }
+  main { position: relative; overflow: hidden; display: flex; flex-direction: column; }
+  .barra { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--borda); background: var(--painel); }
+  .barra .dica { color: var(--suave); font-size: 12.5px; margin-left: auto; }
+  #palco { position: relative; flex: 1; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #vazio { position: absolute; inset: 0; display: grid; place-items: center; color: var(--suave); text-align: center; padding: 24px; }
+  .painel { background: var(--painel); border-left: 1px solid var(--borda); overflow-y: auto; padding: 12px 14px 40px; }
+  .painel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--suave); margin: 18px 0 8px; }
+  .painel h2:first-child { margin-top: 4px; }
+  .campo { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; margin: 6px 0; }
+  .campo label { color: var(--suave); font-size: 13px; }
+  .campo input[type=text], .campo input[type=number], .campo select, textarea {
+    width: 100%; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--borda); background: var(--fundo); }
+  .campo input[type=range] { width: 100%; accent-color: var(--destaque); }
+  .linha { display: flex; gap: 8px; }
+  .btn { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--borda); background: var(--painel2); cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: #4a5163; }
+  .btn.primario { background: var(--destaque); color: #1a1406; border-color: var(--destaque); font-weight: 650; }
+  .btn.perigo { color: var(--erro); }
+  .btn.ligado { border-color: var(--destaque); color: var(--destaque); }
+  .btn:disabled { opacity: .5; cursor: progress; }
+  .btn.cheio { width: 100%; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { padding: 3px 8px; border-radius: 99px; border: 1px solid var(--borda); background: var(--fundo); cursor: pointer; font-size: 12.5px; }
+  .chip.on { background: var(--destaque); border-color: var(--destaque); color: #1a1406; font-weight: 600; }
+  .chip.pintura:not(.on) { border-style: dashed; }
+  .parte { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .parte:hover { background: var(--painel2); } .parte.sel { background: var(--painel2); outline: 1px solid var(--borda); }
+  .parte .cor { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  .parte .anim { color: var(--suave); font-size: 12px; margin-left: auto; text-align: right; }
+  .info { white-space: pre-wrap; color: var(--suave); font-size: 12.5px; background: var(--fundo); border-radius: 8px; padding: 8px 10px; margin: 6px 0; max-height: 120px; overflow-y: auto; }
+  video { width: 100%; border-radius: 8px; background: #000; margin-top: 8px; }
+  textarea { resize: vertical; min-height: 54px; }
+  .sujo::after { content: " •"; color: var(--destaque); }
+  kbd { font: 11px ui-monospace, monospace; padding: 1px 5px; border: 1px solid var(--borda); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Animacao2d</h1><span class="titulo" id="titulo"></span>
+    <span class="espaco"></span><span id="status">carregando…</span>
+  </header>
+  <aside>
+    <div class="busca"><input id="filtro" placeholder="Filtrar cenas…"></div>
+    <div id="lista"></div>
+  </aside>
+  <main>
+    <div class="barra">
+      <button class="btn" id="btnNova" title="Arraste na imagem para criar uma parte (N)">+ Nova parte</button>
+      <button class="btn" id="btnMascaras" title="Mostra o recorte que o motor vai usar (M)">Ver recortes</button>
+      <span class="dica">Arraste a caixa para mover, os cantos para redimensionar e o ponto branco para o pivô ·
+        <kbd>Del</kbd> apaga · <kbd>Ctrl</kbd>+<kbd>S</kbd> salva</span>
+    </div>
+    <div id="palco"><canvas id="tela"></canvas><div id="vazio">Escolha uma cena na lista.</div></div>
+  </main>
+  <section class="painel" id="painel" hidden>
+    <h2 id="nomeCena">Cena</h2>
+    <div class="info" id="infoCena" hidden></div>
+    <div class="campo"><label for="duracao">Duração (s)</label><input id="duracao" type="number" min="0.5" step="0.1"></div>
+    <div class="campo"><label for="camera">Câmera</label><select id="camera"></select></div>
+    <div class="campo"><label for="camInt">Força câmera</label><input id="camInt" type="range" min="0" max="3" step="0.1"></div>
+
+    <h2>Localizar com IA</h2>
+    <textarea id="pedido" placeholder="braço, olho, sol   ou   braço:acenar, sol:girar+pulsar"></textarea>
+    <div class="linha" style="margin-top:6px"><button class="btn cheio" id="btnDetectar">Localizar partes na imagem</button></div>
+
+    <h2>Partes</h2>
+    <div id="partes"></div>
+    <div id="editorParte" hidden>
+      <div class="campo"><label for="pNome">Nome</label><input id="pNome" type="text"></div>
+      <div class="campo" style="align-items:start"><label>Animações</label><div class="chips" id="pAnims"></div></div>
+      <div class="campo"><label for="pMascara">Recorte</label><select id="pMascara"></select></div>
+      <div class="campo"><label for="pInt">Intensidade <span id="vInt"></span></label><input id="pInt" type="range" min="0" max="3" step="0.1"></div>
+      <div class="campo"><label for="pVel">Velocidade <span id="vVel"></span></label><input id="pVel" type="range" min="0.2" max="3" step="0.1"></div>
+      <div class="campo"><label for="pAtraso">Começa em (s)</label><input id="pAtraso" type="number" min="0" step="0.1"></div>
+      <div class="campo" id="campoDirecao"><label for="pDirecao">Direção</label><select id="pDirecao"></select></div>
+      <div class="linha"><button class="btn" id="btnPivoCentro">Pivô no centro</button>
+        <button class="btn perigo" id="btnApagar">Apagar parte</button></div>
+    </div>
+
+    <h2>Salvar e ver</h2>
+    <div class="linha">
+      <button class="btn primario" id="btnSalvar">Salvar</button>
+      <button class="btn" id="btnPrevia">Prévia rápida</button>
+      <button class="btn" id="btnFinal">Render 1080p</button>
+    </div>
+    <video id="video" controls loop muted playsinline hidden></video>
+  </section>
+</div>
+<script>
+"use strict";
+const CORES = ["#ff6347", "#4191ff", "#3cc878", "#ffbe28", "#be64ff", "#00c8c8", "#ff78be", "#8c8c8c"];
+const $ = (id) => document.getElementById(id);
+const E = {
+  cenas: [], catalogo: null, dados: null, spec: null, sel: -1, sujo: false,
+  img: null, imgMascaras: null, verMascaras: false, ferramenta: null, arraste: null, vista: null,
+};
+
+// ------------------------------------------------------------------ utilidades
+function aviso(texto, tipo = "") { const s = $("status"); s.textContent = texto; s.className = tipo; }
+async function api(url, corpo) {
+  const opcoes = corpo === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) };
+  const resp = await fetch(url, opcoes);
+  const dados = await resp.json().catch(() => ({ erro: "resposta inválida do servidor" }));
+  if (!resp.ok || dados.erro) throw new Error(dados.erro || ("HTTP " + resp.status));
+  return dados;
+}
+function tipoAnim(nome) { return E.catalogo.animacoes.find((a) => a.nome === nome); }
+function temMovimento(parte) { return parte.animacoes.some((a) => (tipoAnim(a) || {}).categoria === "movimento"); }
+function marcarSujo(v = true) { E.sujo = v; $("btnSalvar").classList.toggle("sujo", v); }
+function carregarImagem(url) {
+  return new Promise((ok, falha) => { const i = new Image(); i.onload = () => ok(i); i.onerror = falha; i.src = url; });
+}
+function pivoEfetivo(p) {
+  if (p.pivo) return p.pivo;
+  const [x0, y0, x1, y1] = p.caixa, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const usaBase = p.animacoes.some((a) => ["acenar", "balancar", "respirar"].includes(a));
+  return usaBase ? [cx, y1] : [cx, cy];
+}
+
+// ------------------------------------------------------------------ lista de cenas
+async function carregarEstado() {
+  const est = await api("/api/estado");
+  E.cenas = est.cenas; E.catalogo = est.catalogo;
+  $("titulo").textContent = est.titulo;
+  $("camera").innerHTML = E.catalogo.cameras.map((c) => `<option value="${c.nome}" title="${c.descricao}">${c.nome}</option>`).join("");
+  $("pMascara").innerHTML = E.catalogo.mascaras.map((m) => `<option>${m}</option>`).join("");
+  $("pDirecao").innerHTML = '<option value="">(padrão)</option>' + E.catalogo.direcoes.map((d) => `<option>${d}</option>`).join("");
+  desenharLista();
+  aviso(`${E.cenas.length} cenas`);
+}
+function desenharLista() {
+  const filtro = $("filtro").value.trim().toLowerCase();
+  $("lista").innerHTML = E.cenas.filter((c) => !filtro || c.rotulo.toLowerCase().includes(filtro) || (c.descricao || "").toLowerCase().includes(filtro))
+    .map((c) => `<div class="cena ${c.tem_imagem ? "" : "sem-imagem"} ${E.dados && E.dados.id === c.id ? "ativa" : ""}" data-id="${c.id}" title="${(c.descricao || "").replace(/"/g, "&quot;")}">
+      <span class="nome">${c.rotulo}</span>
+      ${c.tem_video ? '<span class="selo v">vídeo</span>' : c.tem_spec ? '<span class="selo a">ajustes</span>' : ""}
+      ${c.tem_imagem ? "" : '<span class="selo">sem imagem</span>'}</div>`).join("");
+}
+$("lista").addEventListener("click", (ev) => {
+  const item = ev.target.closest(".cena");
+  if (item && !item.classList.contains("sem-imagem")) abrirCena(item.dataset.id);
+});
+$("filtro").addEventListener("input", desenharLista);
+
+async function abrirCena(id) {
+  if (E.sujo && !confirm("Há mudanças não salvas. Descartar?")) return;
+  try {
+    aviso("abrindo " + id + "…");
+    const dados = await api("/api/cena/" + encodeURIComponent(id));
+    E.dados = dados; E.spec = dados.spec; E.sel = E.spec.partes.length ? 0 : -1;
+    E.img = await carregarImagem(dados.imagem_url); E.imgMascaras = null; E.verMascaras = false;
+    $("btnMascaras").classList.remove("ligado");
+    marcarSujo(false);
+    $("vazio").hidden = true; $("painel").hidden = false;
+    $("nomeCena").textContent = id + (dados.salvo ? "" : " (novo)");
+    const info = [dados.narracao && ("🎙 " + dados.narracao), dados.descricao && ("🖼 " + dados.descricao)].filter(Boolean).join("\n\n");
+    $("infoCena").hidden = !info; $("infoCena").textContent = info;
+    $("pedido").value = dados.pedido_planejado || "";
+    const v = $("video");
+    if (dados.video_url) { v.src = dados.video_url; v.hidden = false; } else { v.removeAttribute("src"); v.hidden = true; }
+    preencherPainel(); desenharLista(); desenhar();
+    if (dados.aviso) aviso(dados.aviso, "erro");
+    else aviso(dados.salvo ? `${id}: ${E.spec.partes.length} partes` : `${id}: sem ajustes ainda — localize as partes com a IA ou crie à mão`);
+  } catch (e) { aviso(e.message, "erro"); }
+}
+
+// ------------------------------------------------------------------ painel
+function preencherPainel() {
+  const s = E.spec;
+  $("duracao").value = s.duracao; $("camera").value = s.camera.movimento; $("camInt").value = s.camera.intensidade;
+  $("partes").innerHTML = s.partes.map((p, i) => `<div class="parte ${i === E.sel ? "sel" : ""}" data-i="${i}">
+      <span class="cor" style="background:${CORES[i % CORES.length]}"></span><span>${p.nome}</span>
+      <span class="anim">${p.animacoes.join(" + ")}</span></div>`).join("") ||
+    '<div class="info">Nenhuma parte. Use “Localizar partes” ou “+ Nova parte”.</div>';
+  const p = s.partes[E.sel];
+  $("editorParte").hidden = !p;
+  if (!p) return;
+  $("pNome").value = p.nome;
+  $("pAnims").innerHTML = E.catalogo.animacoes.map((a) =>
+    `<span class="chip ${a.categoria} ${p.animacoes.includes(a.nome) ? "on" : ""}" data-nome="${a.nome}" title="${a.descricao} — ${a.exemplos}">${a.nome}</span>`).join("");
+  $("pMascara").value = p.mascara || "auto";
+  $("pInt").value = p.intensidade ?? 1; $("vInt").textContent = Number(p.intensidade ?? 1).toFixed(1);
+  $("pVel").value = p.velocidade ?? 1; $("vVel").textContent = Number(p.velocidade ?? 1).toFixed(1);
+  $("pAtraso").value = p.atraso ?? 0;
+  const usaDirecao = p.animacoes.some((a) => a === "deslizar" || a === "girar");
+  $("campoDirecao").hidden = !usaDirecao; $("pDirecao").value = p.direcao || "";
+}
+$("partes").addEventListener("click", (ev) => {
+  const item = ev.target.closest(".parte"); if (!item) return;
+  E.sel = Number(item.dataset.i); preencherPainel(); desenhar();
+});
+$("pAnims").addEventListener("click", (ev) => {
+  const chip = ev.target.closest(".chip"); const p = E.spec.partes[E.sel]; if (!chip || !p) return;
+  const nome = chip.dataset.nome;
+  if (p.animacoes.includes(nome)) { if (p.animacoes.length > 1) p.animacoes = p.animacoes.filter((a) => a !== nome); }
+  else p.animacoes.push(nome);
+  marcarSujo(); preencherPainel(); desenhar();
+});
+function ligarCampo(id, aplicar) {
+  $(id).addEventListener("input", () => { aplicar($(id).value); marcarSujo(); if (id.startsWith("p")) { preencherPainelLeve(); } desenhar(); });
+}
+function preencherPainelLeve() {
+  const p = E.spec.partes[E.sel]; if (!p) return;
+  $("vInt").textContent = Number(p.intensidade).toFixed(1); $("vVel").textContent = Number(p.velocidade).toFixed(1);
+  const item = document.querySelector(`.parte[data-i="${E.sel}"]`);
+  if (item) item.children[1].textContent = p.nome;
+}
+ligarCampo("duracao", (v) => { E.spec.duracao = Math.max(0.5, Number(v) || 5); });
+ligarCampo("camera", (v) => { E.spec.camera.movimento = v; });
+ligarCampo("camInt", (v) => { E.spec.camera.intensidade = Number(v); });
+ligarCampo("pNome", (v) => { E.spec.partes[E.sel].nome = v || "parte"; });
+ligarCampo("pMascara", (v) => { E.spec.partes[E.sel].mascara = v; E.imgMascaras = null; });
+ligarCampo("pInt", (v) => { E.spec.partes[E.sel].intensidade = Number(v); });
+ligarCampo("pVel", (v) => { E.spec.partes[E.sel].velocidade = Number(v); });
+ligarCampo("pAtraso", (v) => { E.spec.partes[E.sel].atraso = Math.max(0, Number(v) || 0); });
+ligarCampo("pDirecao", (v) => { E.spec.partes[E.sel].direcao = v; });
+$("btnApagar").onclick = apagarSelecionada;
+$("btnPivoCentro").onclick = () => {
+  const p = E.spec.partes[E.sel]; if (!p) return;
+  const [x0, y0, x1, y1] = p.caixa; p.pivo = [(x0 + x1) / 2, (y0 + y1) / 2]; marcarSujo(); desenhar();
+};
+function apagarSelecionada() {
+  if (E.sel < 0) return;
+  E.spec.partes.splice(E.sel, 1); E.sel = Math.min(E.sel, E.spec.partes.length - 1);
+  E.imgMascaras = null; marcarSujo(); preencherPainel(); desenhar();
+}
+
+// ------------------------------------------------------------------ desenho
+const tela = $("tela"), ctx = tela.getContext("2d");
+function calcularVista() {
+  const r = $("palco").getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  tela.width = Math.round(r.width * dpr); tela.height = Math.round(r.height * dpr);
+  const W = E.spec.largura, H = E.spec.altura, margem = 16;
+  const escala = Math.min((r.width - 2 * margem) / W, (r.height - 2 * margem) / H);
+  E.vista = { dpr, escala, ox: (r.width - W * escala) / 2, oy: (r.height - H * escala) / 2 };
+}
+const paraTela = (x, y) => [E.vista.ox + x * E.vista.escala, E.vista.oy + y * E.vista.escala];
+const paraImagem = (x, y) => [(x - E.vista.ox) / E.vista.escala, (y - E.vista.oy) / E.vista.escala];
+
+function desenhar() {
+  if (!E.spec || !E.img) return;
+  calcularVista();
+  const { dpr, escala, ox, oy } = E.vista;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, tela.width, tela.height);
+  const W = E.spec.largura, H = E.spec.altura;
+  ctx.drawImage(E.verMascaras && E.imgMascaras ? E.imgMascaras : E.img, ox, oy, W * escala, H * escala);
+  E.spec.partes.forEach((p, i) => {
+    const cor = CORES[i % CORES.length], sel = i === E.sel;
+    const [ax, ay] = paraTela(p.caixa[0], p.caixa[1]), [bx, by] = paraTela(p.caixa[2], p.caixa[3]);
+    ctx.lineWidth = sel ? 3 : 2; ctx.strokeStyle = cor;
+    if (sel) { ctx.fillStyle = cor + "22"; ctx.fillRect(ax, ay, bx - ax, by - ay); }
+    ctx.strokeRect(ax, ay, bx - ax, by - ay);
+    const rotulo = `${p.nome}: ${p.animacoes.join("+")}`;
+    ctx.font = "600 12px system-ui, sans-serif";
+    const lw = ctx.measureText(rotulo).width + 10, ly = ay - 20 >= 0 ? ay - 20 : by + 2;
+    const lx = Math.max(0, Math.min(ax, tela.width / dpr - lw));
+    ctx.fillStyle = cor; ctx.fillRect(lx, ly, lw, 18); ctx.fillStyle = "#fff"; ctx.fillText(rotulo, lx + 5, ly + 13);
+    if (sel) for (const [hx, hy] of [[ax, ay], [bx, ay], [ax, by], [bx, by]]) {
+      ctx.fillStyle = "#fff"; ctx.fillRect(hx - 5, hy - 5, 10, 10); ctx.strokeStyle = cor; ctx.lineWidth = 2; ctx.strokeRect(hx - 5, hy - 5, 10, 10);
+    }
+    if (temMovimento(p) || sel) {
+      const [px, py] = paraTela(...pivoEfetivo(p));
+      ctx.beginPath(); ctx.arc(px, py, sel ? 8 : 6, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = cor; ctx.stroke();
+      if (!p.pivo) { ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(px, py, 12, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
+    }
+  });
+  if (E.arraste && E.arraste.tipo === "nova") {
+    const a = E.arraste; ctx.setLineDash([6, 4]); ctx.strokeStyle = "#ffb23f"; ctx.lineWidth = 2;
+    ctx.strokeRect(a.x0, a.y0, a.x1 - a.x0, a.y1 - a.y0); ctx.setLineDash([]);
+  }
+}
+window.addEventListener("resize", desenhar);
+
+// ------------------------------------------------------------------ mouse
+function pontoEvento(ev) { const r = tela.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; }
+function acertar(x, y) {
+  const p = E.spec.partes[E.sel];
+  if (p) {
+    const [ax, ay] = paraTela(p.caixa[0], p.caixa[1]), [bx, by] = paraTela(p.caixa[2], p.caixa[3]);
+    const cantos = { nw: [ax, ay], ne: [bx, ay], sw: [ax, by], se: [bx, by] };
+    for (const [nome, [hx, hy]] of Object.entries(cantos)) if (Math.abs(x - hx) <= 8 && Math.abs(y - hy) <= 8) return { tipo: "canto", canto: nome, i: E.sel };
+  }
+  for (let i = E.spec.partes.length - 1; i >= 0; i--) {
+    const q = E.spec.partes[i];
+    if (!(temMovimento(q) || i === E.sel)) continue;
+    const [px, py] = paraTela(...pivoEfetivo(q));
+    if (Math.hypot(x - px, y - py) <= 10) return { tipo: "pivo", i };
+  }
+  let melhor = null, area = Infinity;
+  E.spec.partes.forEach((q, i) => {
+    const [ax, ay] = paraTela(q.caixa[0], q.caixa[1]), [bx, by] = paraTela(q.caixa[2], q.caixa[3]);
+    if (x >= ax && x <= bx && y >= ay && y <= by && (bx - ax) * (by - ay) < area) { melhor = i; area = (bx - ax) * (by - ay); }
+  });
+  return melhor === null ? null : { tipo: "mover", i: melhor };
+}
+tela.addEventListener("mousedown", (ev) => {
+  if (!E.spec) return;
+  const [x, y] = pontoEvento(ev);
+  if (E.ferramenta === "nova") { E.arraste = { tipo: "nova", x0: x, y0: y, x1: x, y1: y }; return; }
+  const alvo = acertar(x, y);
+  if (!alvo) { E.sel = -1; preencherPainel(); desenhar(); return; }
+  if (alvo.i !== E.sel) { E.sel = alvo.i; preencherPainel(); }
+  const p = E.spec.partes[alvo.i];
+  E.arraste = { ...alvo, inicio: paraImagem(x, y), caixa: [...p.caixa], pivo: p.pivo ? [...p.pivo] : null };
+  desenhar();
+});
+window.addEventListener("mousemove", (ev) => {
+  if (!E.spec) return;
+  const [x, y] = pontoEvento(ev);
+  const a = E.arraste;
+  if (!a) {
+    const alvo = ev.target === tela ? acertar(x, y) : null;
+    tela.style.cursor = E.ferramenta === "nova" ? "crosshair" : !alvo ? "default" : alvo.tipo === "canto" ? "nwse-resize" : alvo.tipo === "pivo" ? "grab" : "move";
+    return;
+  }
+  if (a.tipo === "nova") { a.x1 = x; a.y1 = y; desenhar(); return; }
+  const p = E.spec.partes[a.i], [ix, iy] = paraImagem(x, y), dx = ix - a.inicio[0], dy = iy - a.inicio[1];
+  const W = E.spec.largura, H = E.spec.altura, lim = (v, m) => Math.max(0, Math.min(m, v));
+  if (a.tipo === "mover") {
+    const w = a.caixa[2] - a.caixa[0], h = a.caixa[3] - a.caixa[1];
+    const nx = lim(a.caixa[0] + dx, W - w), ny = lim(a.caixa[1] + dy, H - h);
+    p.caixa = [nx, ny, nx + w, ny + h];
+    if (a.pivo) p.pivo = [a.pivo[0] + (nx - a.caixa[0]), a.pivo[1] + (ny - a.caixa[1])];
+  } else if (a.tipo === "canto") {
+    const c = [...a.caixa];
+    if (a.canto.includes("w")) c[0] = lim(Math.min(ix, c[2] - 4), W); else c[2] = lim(Math.max(ix, c[0] + 4), W);
+    if (a.canto.includes("n")) c[1] = lim(Math.min(iy, c[3] - 4), H); else c[3] = lim(Math.max(iy, c[1] + 4), H);
+    p.caixa = c;
+  } else if (a.tipo === "pivo") {
+    p.pivo = [lim(ix, W), lim(iy, H)];
+  }
+  a.mudou = true; desenhar();
+});
+window.addEventListener("mouseup", () => {
+  const a = E.arraste; E.arraste = null;
+  if (!a) return;
+  if (a.tipo === "nova") {
+    const [x0, y0] = paraImagem(Math.min(a.x0, a.x1), Math.min(a.y0, a.y1));
+    const [x1, y1] = paraImagem(Math.max(a.x0, a.x1), Math.max(a.y0, a.y1));
+    E.ferramenta = null; $("btnNova").classList.remove("ligado");
+    if (x1 - x0 > 4 && y1 - y0 > 4) {
+      const W = E.spec.largura, H = E.spec.altura;
+      E.spec.partes.push({ nome: "nova parte", animacoes: ["flutuar"], caixa: [Math.max(0, x0), Math.max(0, y0), Math.min(W, x1), Math.min(H, y1)],
+        mascara: "auto", intensidade: 1, velocidade: 1, atraso: 0 });
+      E.sel = E.spec.partes.length - 1; marcarSujo(); preencherPainel(); $("pNome").select();
+    }
+  } else if (a.mudou) { E.imgMascaras = null; marcarSujo(); }
+  desenhar();
+});
+
+// ------------------------------------------------------------------ ações
+$("btnNova").onclick = () => {
+  E.ferramenta = E.ferramenta === "nova" ? null : "nova";
+  $("btnNova").classList.toggle("ligado", E.ferramenta === "nova");
+  aviso(E.ferramenta ? "arraste na imagem para desenhar a caixa da nova parte" : "");
+};
+async function salvar() {
+  if (!E.spec) return false;
+  try { await api(`/api/cena/${encodeURIComponent(E.dados.id)}/salvar`, { spec: E.spec }); marcarSujo(false);
+    $("nomeCena").textContent = E.dados.id;
+    aviso("salvo", "ok"); const c = E.cenas.find((c) => c.id === E.dados.id); if (c) c.tem_spec = true; desenharLista(); return true; }
+  catch (e) { aviso(e.message, "erro"); return false; }
+}
+$("btnSalvar").onclick = salvar;
+async function trabalhando(botao, mensagem, tarefa) {
+  const botoes = ["btnSalvar", "btnPrevia", "btnFinal", "btnDetectar", "btnMascaras"].map($);
+  botoes.forEach((b) => (b.disabled = true)); aviso(mensagem);
+  const t0 = performance.now();
+  try { await tarefa(); } catch (e) { aviso(e.message, "erro"); }
+  finally { botoes.forEach((b) => (b.disabled = false)); }
+  return (performance.now() - t0) / 1000;
+}
+async function renderizar(previa) {
+  await trabalhando(null, previa ? "renderizando prévia…" : "renderizando em 1080p…", async () => {
+    const r = await api(`/api/cena/${encodeURIComponent(E.dados.id)}/renderizar`, { spec: E.spec, previa });
+    marcarSujo(false); $("nomeCena").textContent = E.dados.id;
+    const v = $("video"); v.src = r.video_url; v.hidden = false; v.play().catch(() => {});
+    const c = E.cenas.find((c) => c.id === E.dados.id); if (c) { c.tem_spec = c.tem_video = true; } desenharLista();
+    aviso(r.falhas_recorte.length ? `pronto — recorte automático falhou em: ${r.falhas_recorte.join(", ")}` : "vídeo pronto", r.falhas_recorte.length ? "erro" : "ok");
+  });
+}
+$("btnPrevia").onclick = () => renderizar(true);
+$("btnFinal").onclick = () => renderizar(false);
+$("btnDetectar").onclick = async () => {
+  if (E.spec.partes.length && !confirm("Substituir as partes atuais pelas que a IA encontrar?")) return;
+  await trabalhando(null, "a IA está procurando as partes na imagem…", async () => {
+    const r = await api(`/api/cena/${encodeURIComponent(E.dados.id)}/detectar`, { pedido: $("pedido").value, duracao: E.spec.duracao });
+    E.spec = r.spec; E.sel = E.spec.partes.length ? 0 : -1; E.imgMascaras = null; marcarSujo(false);
+    $("nomeCena").textContent = E.dados.id;
+    preencherPainel(); desenhar(); aviso(`${E.spec.partes.length} partes encontradas`, "ok");
+  });
+};
+$("btnMascaras").onclick = async () => {
+  E.verMascaras = !E.verMascaras; $("btnMascaras").classList.toggle("ligado", E.verMascaras);
+  if (E.verMascaras && !E.imgMascaras) {
+    await trabalhando(null, "calculando recortes…", async () => {
+      const r = await api(`/api/cena/${encodeURIComponent(E.dados.id)}/mascaras`, { spec: E.spec });
+      E.imgMascaras = await carregarImagem(r.url);
+      const falhas = Object.entries(r.modos).filter(([, m]) => m !== "auto").map(([n]) => n);
+      aviso(falhas.length ? `recorte automático falhou em: ${falhas.join(", ")} (usa caixa/elipse)` : "recortes calculados", falhas.length ? "erro" : "ok");
+    });
+  }
+  desenhar();
+};
+window.addEventListener("keydown", (ev) => {
+  const digitando = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") { ev.preventDefault(); salvar(); return; }
+  if (digitando) return;
+  if (ev.key === "Delete" || ev.key === "Backspace") { ev.preventDefault(); apagarSelecionada(); }
+  else if (ev.key === "Escape") { E.ferramenta = null; $("btnNova").classList.remove("ligado"); E.sel = -1; preencherPainel(); desenhar(); }
+  else if (ev.key.toLowerCase() === "n") $("btnNova").click();
+  else if (ev.key.toLowerCase() === "m") $("btnMascaras").click();
+});
+window.addEventListener("beforeunload", (ev) => { if (E.sujo) { ev.preventDefault(); ev.returnValue = ""; } });
+
+carregarEstado().then(() => {
+  const inicial = new URLSearchParams(location.search).get("cena") || (E.cenas.find((c) => c.tem_imagem) || {}).id;
+  if (inicial) abrirCena(inicial);
+}).catch((e) => aviso(e.message, "erro"));
+</script>
+</body>
+</html>

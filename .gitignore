@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.env
+
+# Projetos de vídeo gerados localmente (imagens, animações e vídeos são grandes)
+projetos/
+*.mp4
+!exemplos/*.mp4
+exemplo_animacao2d/

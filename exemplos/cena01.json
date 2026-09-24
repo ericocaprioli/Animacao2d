@@ -1,0 +1,148 @@
+{
+  "versao": 1,
+  "cena": 1,
+  "imagem": "cena01.png",
+  "largura": 1456,
+  "altura": 816,
+  "duracao": 6.0,
+  "camera": {
+    "movimento": "zoom_in",
+    "intensidade": 1.0
+  },
+  "partes": [
+    {
+      "nome": "braço levantado",
+      "animacoes": [
+        "acenar"
+      ],
+      "caixa": [
+        348,
+        190,
+        478,
+        385
+      ],
+      "pivo": [
+        462,
+        368
+      ],
+      "mascara": "auto",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.0
+    },
+    {
+      "nome": "olho esquerdo",
+      "animacoes": [
+        "piscar"
+      ],
+      "caixa": [
+        484,
+        244,
+        506,
+        266
+      ],
+      "mascara": "caixa",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.0
+    },
+    {
+      "nome": "olho direito",
+      "animacoes": [
+        "piscar"
+      ],
+      "caixa": [
+        537,
+        244,
+        559,
+        266
+      ],
+      "mascara": "caixa",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.0
+    },
+    {
+      "nome": "boca",
+      "animacoes": [
+        "falar"
+      ],
+      "caixa": [
+        500,
+        278,
+        546,
+        304
+      ],
+      "mascara": "caixa",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.0
+    },
+    {
+      "nome": "sol",
+      "animacoes": [
+        "girar",
+        "pulsar"
+      ],
+      "caixa": [
+        1135,
+        35,
+        1345,
+        245
+      ],
+      "mascara": "auto",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.0
+    },
+    {
+      "nome": "nuvem",
+      "animacoes": [
+        "deslizar"
+      ],
+      "caixa": [
+        220,
+        75,
+        450,
+        185
+      ],
+      "mascara": "auto",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.0
+    },
+    {
+      "nome": "lâmpada",
+      "animacoes": [
+        "brilhar",
+        "flutuar"
+      ],
+      "caixa": [
+        615,
+        95,
+        705,
+        215
+      ],
+      "mascara": "auto",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.0
+    },
+    {
+      "nome": "tela do computador",
+      "animacoes": [
+        "codigo"
+      ],
+      "caixa": [
+        918,
+        268,
+        1162,
+        422
+      ],
+      "mascara": "caixa",
+      "intensidade": 1.0,
+      "velocidade": 1.0,
+      "atraso": 0.5
+    }
+  ]
+}

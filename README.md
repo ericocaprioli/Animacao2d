@@ -40,10 +40,11 @@ python -m venv .venv
 pip install -e .
 ```
 
-Chave da API da Anthropic (para títulos, roteiro, cenas e localização das partes): copie
-`.env.exemplo` para `.env` e preencha `ANTHROPIC_API_KEY`. Chave em
-[console.anthropic.com](https://console.anthropic.com/). Sem chave dá para usar o
-[modo manual](#sem-chave-de-api-modo---manual).
+Copie `.env.exemplo` para `.env` e preencha `ANTHROPIC_API_KEY` (chave em
+[console.anthropic.com](https://console.anthropic.com/)). O `.env.exemplo` já vem com
+`ANIMACAO2D_TEXTO=manual`: **títulos, roteiro e cenas você faz no claude.ai (sem custo de API)** e a
+chave só é usada na animação, para localizar as partes nas imagens. Detalhes em
+[Modo manual](#modo-manual-texto-no-claudeai-animação-pela-api).
 
 Teste a instalação (não precisa de chave):
 
@@ -61,7 +62,8 @@ animacao2d novo "como funciona a internet"
 ```
 
 O comando mostra os títulos sugeridos (com ângulo, gancho e ideia de thumbnail). Você escolhe o
-número (ou digita o seu). Aí ele escreve o roteiro e pergunta:
+número (ou digita o seu). Aí vem o roteiro e ele pergunta (no modo manual, cada etapa é um
+copiar/colar no claude.ai, veja abaixo):
 
 ```
 [a] aprovar e gerar as cenas   [r] reescrever com um pedido   [e] editei o roteiro.md, recarregar   [s] sair
@@ -217,23 +219,36 @@ Toda cena descreve a emoção de cada personagem de forma exagerada (raiva: sobr
 rosto vermelho, fumaça saindo das orelhas; alegria: sorrisão, braços para cima; susto: olhos do
 tamanho de pratos, queixo no chão...). O guia completo está em `animacao2d/estilo.py`.
 
-## Sem chave de API (modo `--manual`)
+## Modo manual (texto no claude.ai, animação pela API)
 
-```bash
-animacao2d novo "como funciona a internet" --manual
-```
+Com `ANIMACAO2D_TEXTO=manual` no `.env` (ou `--manual` no comando), títulos, roteiro e cenas não
+usam a API. Em cada etapa:
 
-Em cada etapa o programa grava um arquivo `_manual/<etapa>_pedido.md`. Cole o conteúdo numa
-conversa do [claude.ai](https://claude.ai), salve a resposta (o JSON) no arquivo
-`_manual/<etapa>_resposta.json` que ele indicar e pressione Enter. A localização das partes na
-imagem precisa da API; sem ela, use `--sem-ia` e posicione as caixas no editor.
+1. O programa abre o arquivo do pedido (`projetos/<video>/_manual/<etapa>_pedido.txt`).
+   Copie tudo (Ctrl+A, Ctrl+C) e cole numa conversa do [claude.ai](https://claude.ai).
+2. Copie a resposta do Claude (o botão de copiar do bloco de código) e **cole no terminal**.
+   Aperte Enter numa linha vazia. Se preferir, salve a resposta em
+   `_manual/<etapa>_resposta.json` e aperte Enter.
+3. Se a resposta vier fora do formato, o programa avisa e pede para colar de novo.
+
+Num vídeo de 15 minutos são umas 10 rodadas: 1 de títulos, 1 de roteiro (mais uma a cada
+reescrita) e 1 por seção nas cenas. Só o primeiro pedido de cenas é longo, porque leva o roteiro
+inteiro; os seguintes são curtos e vão **na mesma conversa** (o arquivo avisa). Se abrir uma
+conversa nova, use o `_pedido_completo.txt` da seção. O pedido é texto comum, então também funciona
+em outros chats.
+
+A **animação** (`animar`, e o botão "Localizar partes" do editor) sempre usa a API. Sem chave
+nenhuma, use `animacao2d animar cena01 "braço, olho" --sem-ia` e posicione as partes no editor.
+Para um projeto em modo manual usar a API no texto, passe `--api`.
 
 ## Custos e modelo
 
-Por padrão usa o modelo `claude-opus-5` (troque com `ANIMACAO2D_MODELO` no `.env`; para a
-localização nas imagens, `ANIMACAO2D_MODELO_VISAO`). Estimativa grosseira para um vídeo de 15
-minutos: roteiro e cenas na casa de US$ 1–3; a localização das partes custa alguns centavos por
-cena (depende do tamanho da imagem e do número de partes). As chamadas usam cache de prompt e, se
+- **Modo manual** (padrão do `.env.exemplo`): o texto não custa nada de API. A animação custa em
+  torno de US$ 0,05 por cena com `claude-opus-5` (cerca de US$ 9 para ~180 cenas). A IA só é
+  chamada na primeira vez de cada cena; renderizar de novo é grátis.
+- **Tudo pela API**: some cerca de US$ 1–3 por vídeo para títulos, roteiro e cenas.
+- Os valores são estimativas. Para baratear a animação, teste `ANIMACAO2D_MODELO_VISAO=claude-sonnet-5`.
+- A assinatura do claude.ai (Pro/Max) não inclui créditos de API: são cobranças separadas. As chamadas usam cache de prompt e, se
 o modelo recusar um pedido por engano, a API refaz automaticamente com um modelo substituto
 (`fallbacks`).
 

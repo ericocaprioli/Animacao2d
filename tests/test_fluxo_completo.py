@@ -114,3 +114,54 @@ def test_editor_api(ambiente_isolado, imagem_exemplo):
     finally:
         servidor.shutdown()
         servidor.server_close()
+
+
+def test_texto_manual_e_animacao_pela_api(api, ambiente_isolado, monkeypatch, imagem_exemplo):
+    """ANIMACAO2D_TEXTO=manual: títulos/roteiro/cenas por copiar-colar; só a animação chama a API."""
+    from pathlib import Path
+
+    from servidor_falso import resposta_cenas, resposta_roteiro, resposta_titulos
+
+    monkeypatch.setenv("ANIMACAO2D_TEXTO", "manual")
+    colando: list[str] = []
+    pedidos_vistos: list[str] = []
+
+    def usuario(pergunta=""):
+        if colando:
+            return colando.pop(0)
+        if pergunta.strip() == ">":  # hora de colar a resposta do claude.ai
+            arquivo = max(Path("projetos").glob("**/_manual/*_pedido.txt"), key=lambda a: a.stat().st_mtime_ns)
+            texto = arquivo.read_text(encoding="utf-8")
+            pedidos_vistos.append(arquivo.name)
+            falso = {"messages": [{"content": [{"text": texto}]}]}
+            if arquivo.name.startswith("titulos"):
+                dados = resposta_titulos(falso)
+            elif arquivo.name.startswith("roteiro"):
+                dados = resposta_roteiro(falso)
+            else:
+                dados = resposta_cenas(falso)
+            colando.extend(["Claro! Aqui está:", "", "```json", *json.dumps(dados, ensure_ascii=False, indent=2).split("\n"),
+                            "```", ""])
+            return colando.pop(0)
+        if "Escolha o número" in pergunta:
+            return "1"
+        if "Opção" in pergunta:
+            return "a"
+        return ""
+
+    monkeypatch.setattr("builtins.input", usuario)
+    assert cli.main(["novo", "como funciona a internet", "--minutos", "3"]) == 0
+    assert api.pedidos == []  # nada de texto passou pela API
+    assert pedidos_vistos[:2] == ["titulos_pedido.txt", "roteiro_pedido.txt"]
+    assert [n for n in pedidos_vistos if n.startswith("cenas")] == [f"cenas_secao{i:02d}_pedido.txt" for i in (1, 2, 3, 4)]
+
+    projeto = Projeto.resolver()
+    assert projeto.dados["texto_manual"] is True
+    segundo = (projeto.pasta / "_manual" / "cenas_secao02_pedido.txt").read_text(encoding="utf-8")
+    assert "MESMA conversa" in segundo  # só o primeiro pedido de cenas leva o roteiro inteiro
+    assert len(json.loads(projeto.cenas_json.read_text(encoding="utf-8"))["cenas"]) > 10
+
+    shutil.copy(imagem_exemplo, projeto.pasta_imagens / "cena01.png")
+    assert cli.main(["animar", "cena01", "--previa", "--duracao", "1"]) == 0
+    assert len(api.pedidos) == 1 and "localiza" in api.pedidos[0]["system"][0]["text"]
+    assert projeto.video_da_cena(1).is_file()

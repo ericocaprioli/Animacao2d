@@ -19,14 +19,21 @@ from animacao2d import __version__, config
 from animacao2d.animacao.catalogo import ANIMACOES, CAMERAS, resolver_camera
 from animacao2d.animacao.imagem import EXTENSOES
 from animacao2d.animacao.spec import ErroSpec
-from animacao2d.llm import ClienteIA, ErroIA, criar_cliente
+from animacao2d.llm import ClienteIA, ErroIA, criar_cliente, texto_manual_padrao
 from animacao2d.projeto import ErroProjeto, Projeto
+from animacao2d.roteiro import palavras_alvo
 from animacao2d.util import (configurar_console, formatar_tempo, nome_cena, numero_cena, perguntar, salvar_json,
                              slugify)
 
 
-def _ia(args, pasta: Path | str = ".") -> ClienteIA:
-    return criar_cliente(manual=getattr(args, "manual", False), pasta=pasta)
+def _ia(args, pasta: Path | str = ".", projeto: Projeto | None = None) -> ClienteIA:
+    """IA para texto (títulos, roteiro, cenas): manual se pedido por --manual, pelo projeto ou pelo .env."""
+    manual = bool(getattr(args, "manual", False)) or texto_manual_padrao()
+    if projeto is not None and projeto.dados.get("texto_manual"):
+        manual = True
+    if getattr(args, "api", False):
+        manual = False
+    return criar_cliente(manual=manual, pasta=pasta)
 
 
 def _faixas(numeros: list[int]) -> str:
@@ -58,10 +65,13 @@ def _escolher_titulo(ia: ClienteIA, tema: str, quantidade: int) -> tuple[str, li
             print(f"     ângulo: {t['angulo']}")
             print(f"     gancho: {t['gancho']}")
             print(f"     thumbnail: {t['thumbnail']}\n")
-        resposta = perguntar("Escolha o número do título, digite um título seu, 'r' para gerar outros ou 's' para sair: ")
+        resposta = ""
+        while not resposta:  # Enter vazio (ou linha em branco colada) não escolhe nada
+            resposta = perguntar("Escolha o número do título, digite um título seu, 'r' para gerar outros ou "
+                                 "'s' para sair: ")
         if resposta.lower() == "s":
             raise KeyboardInterrupt
-        if resposta.lower() == "r" or not resposta:
+        if resposta.lower() == "r":
             continue
         if resposta.isdigit() and 1 <= int(resposta) <= len(titulos):
             return titulos[int(resposta) - 1]["titulo"], titulos
@@ -74,18 +84,26 @@ def _aprovar_roteiro(projeto: Projeto, ia: ClienteIA) -> bool:
     while True:
         roteiro = carregar_roteiro(projeto)
         ppm = float(projeto.dados.get("palavras_por_minuto", config.PALAVRAS_POR_MINUTO))
-        print(f"\nRoteiro: {projeto.roteiro_md}\n  {roteiro.resumo(ppm)}")
+        alvo = palavras_alvo(float(projeto.dados.get("minutos", config.MINUTOS_PADRAO)), ppm)
+        print(f"\nRoteiro: {projeto.roteiro_md}\n  {roteiro.resumo(ppm)} (alvo: ~{alvo} palavras)")
+        if not 0.85 * alvo <= roteiro.palavras <= 1.15 * alvo:
+            acao = "expandir" if roteiro.palavras < alvo else "enxugar"
+            print(f"  Atenção: tamanho fora do alvo. Use [r] e peça para {acao} até ~{alvo} palavras.")
         for s in roteiro.secoes:
             print(f"  - [{s.tipo}] {s.titulo}")
         print("\n  [a] aprovar e gerar as cenas   [r] reescrever com um pedido   "
               "[e] editei o roteiro.md, recarregar   [s] sair e continuar depois")
-        opcao = perguntar("Opção: ", "a").lower()
+        opcao = ""
+        while opcao not in ("a", "r", "e", "s"):  # exige uma escolha explícita
+            opcao = perguntar("Opção (a/r/e/s): ").lower()
         if opcao == "a":
             salvar_roteiro(projeto, roteiro)
             projeto.definir_etapa("roteiro_aprovado")
             return True
         if opcao == "r":
-            pedido = perguntar("O que mudar? ")
+            pedido = ""
+            while not pedido:
+                pedido = perguntar("O que mudar? ")
             gerar_roteiro(projeto, ia, pedido, partir_do_atual=True)
         elif opcao == "s":
             print(f"Tudo salvo. Para continuar: animacao2d roteiro -p {projeto.pasta}  |  animacao2d cenas -p {projeto.pasta}")
@@ -109,11 +127,13 @@ def cmd_novo(args) -> int:
     ia = _ia(args, config.pasta_projetos() / "_novo")
     titulo, sugestoes = (args.titulo, []) if args.titulo else _escolher_titulo(ia, args.tema, args.quantidade)
     projeto = Projeto.criar(titulo, args.tema, minutos=args.minutos, ritmo=args.ritmo)
+    projeto.dados["texto_manual"] = ia.nome == "manual"
+    projeto.salvar()
     if sugestoes:
         salvar_json(projeto.titulos_json, {"tema": args.tema, "escolhido": titulo, "titulos": sugestoes})
     print(f"\nProjeto criado: {projeto.pasta}")
-    if isinstance(ia, ClienteIA) and ia.nome == "manual":
-        ia = _ia(args, projeto.pasta)
+    if ia.nome == "manual":
+        ia = _ia(args, projeto.pasta, projeto)
     from animacao2d.fluxo import gerar_plano_de_cenas, gerar_roteiro
 
     gerar_roteiro(projeto, ia)
@@ -142,7 +162,7 @@ def cmd_roteiro(args) -> int:
     from animacao2d.fluxo import gerar_roteiro
 
     projeto = Projeto.resolver(args.projeto)
-    ia = _ia(args, projeto.pasta)
+    ia = _ia(args, projeto.pasta, projeto)
     if args.titulo:
         projeto.dados["titulo"] = args.titulo
         projeto.salvar()
@@ -163,7 +183,7 @@ def cmd_cenas(args) -> int:
         return 1
     if projeto.dados.get("etapa") in ("roteiro", "titulo_aprovado"):
         print("Obs.: usando o roteiro.md atual como aprovado.")
-    plano = gerar_plano_de_cenas(projeto, _ia(args, projeto.pasta), getattr(args, "ritmo", None),
+    plano = gerar_plano_de_cenas(projeto, _ia(args, projeto.pasta, projeto), getattr(args, "ritmo", None),
                                  getattr(args, "paralelo", 1))
     _resumo_cenas(plano, projeto)
     return 0
@@ -186,17 +206,14 @@ def cmd_animar(args) -> int:
 
     camera = resolver_camera(args.camera) if args.camera else None
     alvos: list[AlvoCena] = []
-    pasta_ia: Path = Path(".")
     if args.alvo and Path(args.alvo).suffix.lower() in EXTENSOES:
         imagem = Path(args.alvo)
         if not imagem.is_file():
             print(f"Imagem não encontrada: {imagem}")
             return 1
         alvos.append(AlvoCena.avulso(imagem))
-        pasta_ia = imagem.parent
     else:
         projeto = Projeto.resolver(args.projeto)
-        pasta_ia = projeto.pasta
         if args.todas:
             numeros = sorted(projeto.imagens())
             if not numeros:
@@ -226,7 +243,7 @@ def cmd_animar(args) -> int:
         for a in alvos)
     if precisa_ia:
         try:
-            ia = _ia(args, pasta_ia)
+            ia = criar_cliente(manual=False)  # a animação sempre usa a API (visão)
         except ErroIA as erro:
             print(f"{erro}\nContinuando sem IA (caixas provisórias).")
     falhas = []
@@ -357,7 +374,9 @@ def _parser() -> argparse.ArgumentParser:
 
     def com_manual(sp):
         sp.add_argument("--manual", action="store_true",
-                        help="sem API: grava o pedido num arquivo para você colar no claude.ai")
+                        help="sem API: você cola o pedido no claude.ai e cola a resposta de volta")
+        sp.add_argument("--api", action="store_true",
+                        help="usa a API mesmo se o projeto/.env estiver em modo manual")
 
     s = sub.add_parser("novo", help="tema -> títulos -> roteiro -> cenas (fluxo guiado)")
     s.add_argument("tema")
@@ -407,7 +426,6 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--sem-ia", action="store_true", help="não usa IA: cria caixas para ajustar no editor")
     s.add_argument("--previa", action="store_true", help="vídeo menor e mais rápido, para conferir")
     s.add_argument("--forcar", action="store_true", help="com --todas, refaz até as já animadas")
-    com_manual(s)
     s.set_defaults(funcao=cmd_animar)
 
     s = sub.add_parser("editor", help="abre o editor visual no navegador")

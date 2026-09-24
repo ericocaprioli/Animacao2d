@@ -9,11 +9,14 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from animacao2d import config
-from animacao2d.util import Progresso, extrair_json, perguntar, salvar_texto
+from animacao2d.util import Progresso, extrair_json, salvar_texto
 
 BETA_FALLBACK = "server-side-fallback-2026-07-01"
 
@@ -173,53 +176,129 @@ class ClaudeIA(ClienteIA):
 
 
 class ManualIA(ClienteIA):
-    """Sem API: grava o pedido num arquivo para colar no claude.ai e lê a resposta."""
+    """Sem API: você cola o pedido no claude.ai (ou em outro chat) e cola a resposta de volta.
+
+    - o pedido é gravado em _manual/<etapa>_pedido.txt e aberto automaticamente;
+    - a resposta pode ser colada direto no terminal (ou salva em _manual/<etapa>_resposta.json);
+    - pedidos seguidos com o mesmo contexto (as seções das cenas) viram pedidos curtos
+      para colar na MESMA conversa, sem repetir o roteiro inteiro.
+    """
 
     nome = "manual"
     aceita_imagem = False
 
-    def __init__(self, pasta: str | Path):
+    def __init__(self, pasta: str | Path, abrir_arquivo: bool | None = None):
         self.pasta = Path(pasta) / "_manual"
+        if abrir_arquivo is None:
+            abrir_arquivo = not os.environ.get("ANIMACAO2D_NAO_ABRIR")
+        self.abrir_arquivo = abrir_arquivo
+        self._contexto_anterior: tuple | None = None
+        self._tarefa_anterior = ""
 
     def gerar_json(self, *, tarefa: str, sistema: str, conteudo: list[dict] | str, schema: dict,
                    esforco: str = "high", max_tokens: int = 64000, visao: bool = False,
                    mensagem: str = "Pensando") -> dict:
         if visao:
-            raise ErroIA("O modo manual não localiza partes na imagem. Use o editor visual (animacao2d editor).")
-        pedido = self.pasta / f"{tarefa}_pedido.md"
+            raise ErroIA("O modo manual não localiza partes na imagem: a animação usa a API "
+                         "(ou use --sem-ia e posicione as partes no editor).")
+        blocos = [bloco_texto(conteudo)] if isinstance(conteudo, str) else conteudo
+        fixos = tuple(b["text"] for b in blocos if b.get("type") == "text" and b.get("cache_control"))
+        variaveis = [b for b in blocos if not b.get("cache_control")]
+        contexto = (sistema, fixos, json.dumps(schema, sort_keys=True))
+        completo = _pedido_completo(sistema, blocos, schema)
+        pedido = self.pasta / f"{tarefa}_pedido.txt"
         resposta = self.pasta / f"{tarefa}_resposta.json"
-        texto = (
-            f"# Pedido: {tarefa}\n\n"
-            "Cole TODO este texto numa conversa nova do Claude (claude.ai).\n\n"
-            "## Instruções\n\n"
-            f"{sistema}\n\n"
-            "## Tarefa\n\n"
-            f"{_texto_do_conteudo(conteudo)}\n\n"
-            "## Formato da resposta\n\n"
-            "Responda SOMENTE com um JSON válido (sem comentários) que siga este JSON Schema:\n\n"
-            f"```json\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n```\n"
-        )
+        continuacao = bool(fixos) and contexto == self._contexto_anterior
+        if continuacao:
+            salvar_texto(self.pasta / f"{tarefa}_pedido_completo.txt", completo)
+            texto = (f"(Cole na MESMA conversa do pedido anterior: {self._tarefa_anterior})\n\n"
+                     f"{_texto_do_conteudo(variaveis)}\n\n"
+                     "Responda SOMENTE com o JSON, no mesmo formato da sua resposta anterior.\n")
+        else:
+            texto = completo
         salvar_texto(pedido, texto)
+        self._contexto_anterior, self._tarefa_anterior = contexto, tarefa
+
         print(f"\n[modo manual] {mensagem}")
-        print(f"  1. Abra {pedido} e cole o conteúdo no claude.ai")
-        print(f"  2. Salve a resposta (o JSON) em {resposta}")
+        onde = "na MESMA conversa do pedido anterior" if continuacao else "numa conversa NOVA"
+        print(f"  1. Copie todo o texto de {pedido} (Ctrl+A, Ctrl+C) e cole {onde} do claude.ai")
+        print("  2. Copie a resposta (o bloco JSON) e cole aqui embaixo. Depois aperte Enter numa linha vazia.")
+        print(f"     (ou salve a resposta em {resposta} e aperte Enter; 'c' cancela)")
+        if self.abrir_arquivo:
+            _abrir_no_sistema(pedido)
+        return self._ler_resposta(resposta, schema)
+
+    def _ler_resposta(self, arquivo: Path, schema: dict) -> dict:
         while True:
-            comando = perguntar("  3. Pressione Enter quando salvar (ou 'c' para cancelar): ").lower()
-            if comando == "c":
-                raise ErroIA("Cancelado.")
-            if not resposta.is_file():
-                print(f"  Ainda não encontrei {resposta}.")
-                continue
+            texto = _ler_colado()
+            if not texto.strip():
+                if not arquivo.is_file():
+                    print(f"  Nada colado e não encontrei {arquivo}. Cole a resposta ou salve o arquivo.")
+                    continue
+                texto = arquivo.read_text(encoding="utf-8")
             try:
-                dados = extrair_json(resposta.read_text(encoding="utf-8"))
-            except ValueError as erro:
-                print(f"  O arquivo não tem um JSON válido: {erro}")
+                dados = extrair_json(texto)
+            except ValueError:
+                print("  Não achei um JSON completo nisso. Copie a resposta inteira (o bloco de código) e cole de novo.")
                 continue
             erros = validar_schema(dados, schema)
             if erros:
-                print("  O JSON não está no formato esperado:\n   - " + "\n   - ".join(erros[:8]))
+                print("  O JSON não está no formato esperado (peça ao Claude para corrigir e cole de novo):\n   - "
+                      + "\n   - ".join(erros[:8]))
                 continue
+            salvar_texto(arquivo, json.dumps(dados, ensure_ascii=False, indent=2) + "\n")
             return dados
+
+
+def _pedido_completo(sistema: str, blocos: list[dict], schema: dict) -> str:
+    return (
+        "=== INSTRUÇÕES ===\n\n"
+        f"{sistema}\n\n"
+        "=== TAREFA ===\n\n"
+        f"{_texto_do_conteudo(blocos)}\n\n"
+        "=== FORMATO DA RESPOSTA ===\n\n"
+        "Responda SOMENTE com um JSON válido (sem comentários, sem texto antes ou depois) que siga este "
+        "JSON Schema:\n\n"
+        f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n"
+    )
+
+
+def _ler_colado() -> str:
+    """Lê várias linhas coladas no terminal até uma linha vazia depois de um JSON completo."""
+    linhas: list[str] = []
+    while True:
+        try:
+            linha = input("  > " if not linhas else "")
+        except EOFError:
+            break
+        comando = linha.strip().lower()
+        if comando in ("c", "cancelar"):
+            raise ErroIA("Cancelado.")
+        if comando == "fim":
+            break
+        if not comando:
+            if not linhas:
+                break  # Enter sem colar nada: tenta o arquivo de resposta
+            try:
+                extrair_json("\n".join(linhas))
+                break
+            except ValueError:
+                continue  # linha vazia no meio (texto antes do JSON): continua lendo
+        linhas.append(linha)
+    return "\n".join(linhas)
+
+
+def _abrir_no_sistema(caminho: Path) -> None:
+    """Abre o arquivo no editor de texto padrão (melhor esforço)."""
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(caminho))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(caminho)])
+        else:
+            subprocess.Popen(["xdg-open", str(caminho)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, ValueError):
+        pass
 
 
 def _mensagem_sem_chave() -> str:
@@ -227,6 +306,11 @@ def _mensagem_sem_chave() -> str:
         "Não consegui acessar a API da Anthropic. Crie um arquivo .env com ANTHROPIC_API_KEY=... "
         "(veja .env.exemplo) ou rode com --manual para copiar e colar os pedidos no claude.ai."
     )
+
+
+def texto_manual_padrao() -> bool:
+    """ANIMACAO2D_TEXTO=manual no .env: títulos, roteiro e cenas sempre no modo manual."""
+    return os.environ.get("ANIMACAO2D_TEXTO", "").strip().lower() == "manual"
 
 
 def criar_cliente(manual: bool = False, pasta: str | Path = ".") -> ClienteIA:

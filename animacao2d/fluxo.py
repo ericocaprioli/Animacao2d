@@ -44,7 +44,9 @@ def gerar_roteiro(projeto: Projeto, ia: ClienteIA, pedido: str = "", partir_do_a
     roteiro = escrever_roteiro(ia, projeto.titulo, projeto.dados.get("tema", projeto.titulo),
                                float(projeto.dados.get("minutos", config.MINUTOS_PADRAO)),
                                float(projeto.dados.get("palavras_por_minuto", config.PALAVRAS_POR_MINUTO)),
-                               pedido, anterior)
+                               pedido, anterior,
+                               # no modo manual não refaz sozinho (cada rodada é um copiar/colar seu)
+                               ajustar_tamanho=ia.nome != "manual")
     salvar_roteiro(projeto, roteiro)
     projeto.definir_etapa("roteiro")
     return roteiro

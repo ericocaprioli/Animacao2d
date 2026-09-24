@@ -68,6 +68,11 @@
   textarea { resize: vertical; min-height: 54px; }
   .sujo::after { content: " •"; color: var(--destaque); }
   kbd { font: 11px ui-monospace, monospace; padding: 1px 5px; border: 1px solid var(--borda); border-radius: 4px; }
+  .passos { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .passos li { background: var(--fundo); border-radius: 8px; padding: 8px 10px; color: var(--suave); font-size: 12.5px; }
+  .passos li .btn { margin-right: 6px; color: var(--texto); }
+  .passos a { color: var(--destaque); }
+  .gratis { font-size: 10.5px; padding: 1px 7px; border-radius: 99px; background: #1f4d34; color: #9ff0c0; margin-left: 6px; vertical-align: 2px; }
 </style>
 </head>
 <body>
@@ -96,9 +101,19 @@
     <div class="campo"><label for="camera">Câmera</label><select id="camera"></select></div>
     <div class="campo"><label for="camInt">Força câmera</label><input id="camInt" type="range" min="0" max="3" step="0.1"></div>
 
-    <h2>Localizar com IA</h2>
+    <h2>O que animar <span class="gratis" id="seloGratis" hidden>grátis · claude.ai</span></h2>
     <textarea id="pedido" placeholder="braço, olho, sol   ou   braço:acenar, sol:girar+pulsar"></textarea>
-    <div class="linha" style="margin-top:6px"><button class="btn cheio" id="btnDetectar">Localizar partes na imagem</button></div>
+    <div class="linha" style="margin-top:6px" id="fluxoApi"><button class="btn cheio" id="btnDetectar">Localizar partes na imagem</button></div>
+    <ol class="passos" id="fluxoManual" hidden>
+      <li><button class="btn" id="btnCopiarImagem">1. Copiar imagem</button> e cole (Ctrl+V) numa conversa nova do
+        <a href="https://claude.ai/new" target="_blank" rel="noopener">claude.ai</a>
+        · <a id="linkBaixar" download>ou baixe a imagem</a></li>
+      <li><button class="btn" id="btnCopiarPedido">2. Copiar pedido</button> e cole na mesma mensagem. Envie.</li>
+      <li>3. Copie a resposta do Claude e cole aqui:
+        <textarea id="respostaManual" placeholder="cole aqui a resposta (o JSON)"></textarea>
+        <button class="btn cheio" id="btnUsarResposta" style="margin-top:6px">Usar resposta</button></li>
+    </ol>
+    <div class="info" id="dicaManual" hidden>Ou sem IA: as caixas das partes planejadas já estão na imagem. Arraste cada uma até a parte certa, ajuste o pivô e salve.</div>
 
     <h2>Partes</h2>
     <div id="partes"></div>
@@ -120,6 +135,7 @@
       <button class="btn" id="btnPrevia">Prévia rápida</button>
       <button class="btn" id="btnFinal">Render 1080p</button>
     </div>
+    <div class="linha" style="margin-top:8px"><button class="btn cheio" id="btnProxima" title="Salva e abre a próxima cena com imagem (Ctrl+→)">Salvar e ir para a próxima cena →</button></div>
     <video id="video" controls loop muted playsinline hidden></video>
   </section>
 </div>
@@ -157,7 +173,9 @@ function pivoEfetivo(p) {
 // ------------------------------------------------------------------ lista de cenas
 async function carregarEstado() {
   const est = await api("/api/estado");
-  E.cenas = est.cenas; E.catalogo = est.catalogo;
+  E.cenas = est.cenas; E.catalogo = est.catalogo; E.modoIa = est.modo_ia;
+  const gratis = E.modoIa === "manual";
+  $("fluxoManual").hidden = !gratis; $("seloGratis").hidden = !gratis; $("fluxoApi").hidden = gratis;
   $("titulo").textContent = est.titulo;
   $("camera").innerHTML = E.catalogo.cameras.map((c) => `<option value="${c.nome}" title="${c.descricao}">${c.nome}</option>`).join("");
   $("pMascara").innerHTML = E.catalogo.mascaras.map((m) => `<option>${m}</option>`).join("");
@@ -193,11 +211,14 @@ async function abrirCena(id) {
     const info = [dados.narracao && ("🎙 " + dados.narracao), dados.descricao && ("🖼 " + dados.descricao)].filter(Boolean).join("\n\n");
     $("infoCena").hidden = !info; $("infoCena").textContent = info;
     $("pedido").value = dados.pedido_planejado || "";
+    $("respostaManual").value = ""; $("linkBaixar").href = dados.imagem_url; $("linkBaixar").download = id + ".png";
+    $("dicaManual").hidden = !dados.provisorio;
     const v = $("video");
     if (dados.video_url) { v.src = dados.video_url; v.hidden = false; } else { v.removeAttribute("src"); v.hidden = true; }
     preencherPainel(); desenharLista(); desenhar();
     if (dados.aviso) aviso(dados.aviso, "erro");
-    else aviso(dados.salvo ? `${id}: ${E.spec.partes.length} partes` : `${id}: sem ajustes ainda — localize as partes com a IA ou crie à mão`);
+    else if (dados.provisorio) aviso(`${id}: caixas provisórias das partes planejadas — localize pelo claude.ai ou arraste até o lugar certo`);
+    else aviso(dados.salvo ? `${id}: ${E.spec.partes.length} partes` : `${id}: sem ajustes ainda — localize as partes ou crie à mão`);
   } catch (e) { aviso(e.message, "erro"); }
 }
 
@@ -402,7 +423,7 @@ async function salvar() {
 }
 $("btnSalvar").onclick = salvar;
 async function trabalhando(botao, mensagem, tarefa) {
-  const botoes = ["btnSalvar", "btnPrevia", "btnFinal", "btnDetectar", "btnMascaras"].map($);
+  const botoes = ["btnSalvar", "btnPrevia", "btnFinal", "btnDetectar", "btnMascaras", "btnUsarResposta", "btnProxima"].map($);
   botoes.forEach((b) => (b.disabled = true)); aviso(mensagem);
   const t0 = performance.now();
   try { await tarefa(); } catch (e) { aviso(e.message, "erro"); }
@@ -441,9 +462,57 @@ $("btnMascaras").onclick = async () => {
   }
   desenhar();
 };
+// ------------------------------------------------------------------ modo grátis (claude.ai)
+async function copiarTexto(texto) {
+  try { await navigator.clipboard.writeText(texto); return true; }
+  catch (e) {
+    const t = document.createElement("textarea"); t.value = texto; document.body.appendChild(t); t.select();
+    const ok = document.execCommand("copy"); t.remove(); return ok;
+  }
+}
+$("btnCopiarImagem").onclick = async () => {
+  try {
+    const c = document.createElement("canvas"); c.width = E.img.naturalWidth; c.height = E.img.naturalHeight;
+    c.getContext("2d").drawImage(E.img, 0, 0);
+    const png = new Promise((ok) => c.toBlob(ok, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    aviso("imagem copiada — cole (Ctrl+V) na conversa do claude.ai", "ok");
+  } catch (e) { aviso("o navegador não deixou copiar a imagem: use “ou baixe a imagem” e anexe o arquivo", "erro"); }
+};
+$("btnCopiarPedido").onclick = async () => {
+  try {
+    const r = await api(`/api/cena/${encodeURIComponent(E.dados.id)}/pedido_manual`, { pedido: $("pedido").value });
+    aviso(await copiarTexto(r.texto) ? "pedido copiado — cole na mesma mensagem, junto com a imagem, e envie" : "não consegui copiar o pedido", "ok");
+  } catch (e) { aviso(e.message, "erro"); }
+};
+$("btnUsarResposta").onclick = async () => {
+  const texto = $("respostaManual").value.trim();
+  if (!texto) { aviso("cole a resposta do Claude no campo acima", "erro"); return; }
+  if (E.sujo && E.spec.partes.length && !confirm("Substituir as partes atuais pelas da resposta?")) return;
+  await trabalhando(null, "lendo a resposta…", async () => {
+    const r = await api(`/api/cena/${encodeURIComponent(E.dados.id)}/resposta_manual`,
+      { texto, pedido: $("pedido").value, duracao: E.spec.duracao });
+    E.spec = r.spec; E.sel = E.spec.partes.length ? 0 : -1; E.imgMascaras = null; marcarSujo(false);
+    $("nomeCena").textContent = E.dados.id; $("dicaManual").hidden = true; $("respostaManual").value = "";
+    const c = E.cenas.find((c) => c.id === E.dados.id); if (c) c.tem_spec = true; desenharLista();
+    preencherPainel(); desenhar();
+    aviso(`${E.spec.partes.length} partes posicionadas` + (r.nao_encontrados.length ? ` · não achou: ${r.nao_encontrados.join(", ")}` : "") +
+      " — confira e clique em Prévia rápida", "ok");
+  });
+};
+async function proximaCena() {
+  if (!E.dados) return;
+  if (E.sujo && !(await salvar())) return;  // caixas provisórias intocadas não são salvas
+  marcarSujo(false);
+  const ordem = E.cenas.filter((c) => c.tem_imagem), i = ordem.findIndex((c) => c.id === E.dados.id);
+  if (i >= 0 && i + 1 < ordem.length) abrirCena(ordem[i + 1].id); else aviso("essa era a última cena com imagem", "ok");
+}
+$("btnProxima").onclick = proximaCena;
+
 window.addEventListener("keydown", (ev) => {
   const digitando = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") { ev.preventDefault(); salvar(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "ArrowRight") { ev.preventDefault(); proximaCena(); return; }
   if (digitando) return;
   if (ev.key === "Delete" || ev.key === "Backspace") { ev.preventDefault(); apagarSelecionada(); }
   else if (ev.key === "Escape") { E.ferramenta = null; $("btnNova").classList.remove("ligado"); E.sel = -1; preencherPainel(); desenhar(); }

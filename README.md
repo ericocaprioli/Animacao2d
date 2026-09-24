@@ -5,6 +5,11 @@ Ferramenta em Python para produzir vídeos explicativos de tecnologia no estilo 
 sobre código e tecnologia: ilustrações simples, trocas de cena dinâmicas, humor seco e pequenas
 animações.
 
+**É grátis:** você não precisa de API paga. Onde entra inteligência artificial (títulos, roteiro,
+cenas e dizer onde está o braço, o olho ou o sol na imagem), o programa monta o pedido, você cola
+numa conversa do [claude.ai](https://claude.ai) (vale o plano gratuito) e cola a resposta de volta.
+O resto (recorte, animação, vídeo) roda no seu computador.
+
 ![Cena de exemplo animada](exemplos/demo.gif)
 
 *A cena de exemplo: braço acenando (dobra no ombro), olhos piscando juntos, boca falando, sol
@@ -23,8 +28,9 @@ girando, nuvem deslizando, lâmpada brilhando, código sendo digitado na tela e 
    - a **lista de animações simples** (ex.: `cena01: braço do DEV (acenar), olhos (piscar)`);
    - movimento de câmera, tempo de início e fim, e o texto da narração.
 4. **Animação**: você gera as imagens, salva como `cena01.png`, `cena02.png`... e roda
-   `animacao2d animar cena01 "braço, olho, sol"`. A IA localiza cada parte na imagem, o motor
-   recorta, preenche o fundo atrás e anima. Sai um MP4 1920x1080 (16:9) pronto para o editor.
+   `animacao2d animar cena01 "braço, olho, sol"`. Você envia a imagem e o pedido ao claude.ai, ele
+   diz onde está cada parte, e o motor recorta, preenche o fundo atrás e anima. Sai um MP4
+   1920x1080 (16:9) pronto para o editor.
 5. **Editor visual** no navegador para corrigir caixas e pivôs, e **montagem** do vídeo completo
    (com a sua narração, se quiser).
 
@@ -40,13 +46,10 @@ python -m venv .venv
 pip install -e .
 ```
 
-Copie `.env.exemplo` para `.env` e preencha `ANTHROPIC_API_KEY` (chave em
-[console.anthropic.com](https://console.anthropic.com/)). O `.env.exemplo` já vem com
-`ANIMACAO2D_TEXTO=manual`: **títulos, roteiro e cenas você faz no claude.ai (sem custo de API)** e a
-chave só é usada na animação, para localizar as partes nas imagens. Detalhes em
-[Modo manual](#modo-manual-texto-no-claudeai-animação-pela-api).
+Não precisa de chave de API: sem chave, o programa já trabalha no [modo grátis](#modo-grátis-tudo-pelo-claudeai).
+Se quiser, copie `.env.exemplo` para `.env` (ele deixa isso explícito com `ANIMACAO2D_IA=manual`).
 
-Teste a instalação (não precisa de chave):
+Teste a instalação:
 
 ```bash
 animacao2d exemplo
@@ -61,9 +64,9 @@ animacao2d exemplo
 animacao2d novo "como funciona a internet"
 ```
 
-O comando mostra os títulos sugeridos (com ângulo, gancho e ideia de thumbnail). Você escolhe o
-número (ou digita o seu). Aí vem o roteiro e ele pergunta (no modo manual, cada etapa é um
-copiar/colar no claude.ai, veja abaixo):
+Cada etapa é um copiar/colar no claude.ai ([como funciona](#modo-grátis-tudo-pelo-claudeai)).
+Primeiro vêm os títulos sugeridos (com ângulo, gancho e ideia de thumbnail): você escolhe o número
+(ou digita o seu). Depois vem o roteiro, e ele pergunta:
 
 ```
 [a] aprovar e gerar as cenas   [r] reescrever com um pedido   [e] editei o roteiro.md, recarregar   [s] sair
@@ -128,11 +131,14 @@ animacao2d animar cena01 "braço:acenar, sol:girar+pulsar, nuvem:deslizar"
 animacao2d animar --todas                       # todas as cenas que já têm imagem
 ```
 
-- A IA olha a imagem, encontra cada parte (braço, olhos, sol...) e o pivô (ombro, centro...).
+- O programa mostra qual imagem anexar e abre o pedido: você anexa a imagem numa conversa nova do
+  claude.ai, cola o pedido na mesma mensagem, envia e cola a resposta no terminal. O Claude diz onde
+  está cada parte (braço, olhos, sol...) e o pivô (ombro, centro...). Com `--todas`, digite `c` para
+  pular uma cena.
 - O resultado vai para `animacoes/cena01.mp4`. Confira `animacoes/cena01_partes.png`: cada parte
   aparece colorida exatamente como foi recortada.
-- Rodar de novo **não** chama a IA outra vez: reaproveita os ajustes de `animacoes/cena01.json`.
-  Para localizar de novo: `--redetectar`.
+- Rodar de novo **não** pede a localização outra vez: reaproveita os ajustes de
+  `animacoes/cena01.json`. Para localizar de novo: `--redetectar`.
 - Outras opções: `--duracao 6`, `--camera zoom_rapido`, `--previa` (960x540, rápido),
   `--sem-ia` (cria caixas para você posicionar no editor), `--forcar` (com `--todas`, refaz tudo).
 
@@ -150,9 +156,20 @@ animacao2d editor
 
 Abre o navegador com a lista de cenas. Na imagem você arrasta as caixas, redimensiona pelos cantos
 e move o **pivô** (o ponto branco: ombro do braço, centro do sol...). No painel escolhe as
-animações, a intensidade, a velocidade, quando começa (`Começa em`), a câmera e a duração. Botões:
-**Localizar partes na imagem** (IA), **Ver recortes**, **Prévia rápida** e **Render 1080p**.
-Atalhos: `N` nova parte, `M` ver recortes, `Del` apaga, `Ctrl+S` salva.
+animações, a intensidade, a velocidade, quando começa (`Começa em`), a câmera e a duração.
+
+É o jeito mais prático de fazer o modo grátis, cena por cena:
+
+1. **Copiar imagem** e cole (Ctrl+V) numa conversa nova do claude.ai (ou use "baixe a imagem" e anexe);
+2. **Copiar pedido** e cole na mesma mensagem, envie;
+3. copie a resposta do Claude, cole no campo do editor e clique **Usar resposta**;
+4. **Prévia rápida** para conferir e **Salvar e ir para a próxima cena**.
+
+Prefere não usar IA nenhuma? Cada cena já abre com as caixas das partes planejadas (ex.: "braço do
+DEV: acenar"): é só arrastar cada uma até o lugar certo e salvar.
+
+Botões: **Ver recortes**, **Prévia rápida**, **Render 1080p**. Atalhos: `N` nova parte,
+`M` ver recortes, `Del` apaga, `Ctrl+S` salva, `Ctrl+→` salva e vai para a próxima cena.
 
 Funciona também numa pasta de imagens soltas: `animacao2d editor minha_pasta/`.
 
@@ -219,13 +236,15 @@ Toda cena descreve a emoção de cada personagem de forma exagerada (raiva: sobr
 rosto vermelho, fumaça saindo das orelhas; alegria: sorrisão, braços para cima; susto: olhos do
 tamanho de pratos, queixo no chão...). O guia completo está em `animacao2d/estilo.py`.
 
-## Modo manual (texto no claude.ai, animação pela API)
+## Modo grátis (tudo pelo claude.ai)
 
-Com `ANIMACAO2D_TEXTO=manual` no `.env` (ou `--manual` no comando), títulos, roteiro e cenas não
-usam a API. Em cada etapa:
+É o padrão quando não há chave de API (ou com `ANIMACAO2D_IA=manual` no `.env`, ou `--manual`).
+Nada é cobrado: onde a IA entra, você faz a ponte com o [claude.ai](https://claude.ai).
+
+**Títulos, roteiro e cenas** (no terminal):
 
 1. O programa abre o arquivo do pedido (`projetos/<video>/_manual/<etapa>_pedido.txt`).
-   Copie tudo (Ctrl+A, Ctrl+C) e cole numa conversa do [claude.ai](https://claude.ai).
+   Copie tudo (Ctrl+A, Ctrl+C) e cole numa conversa do claude.ai.
 2. Copie a resposta do Claude (o botão de copiar do bloco de código) e **cole no terminal**.
    Aperte Enter numa linha vazia. Se preferir, salve a resposta em
    `_manual/<etapa>_resposta.json` e aperte Enter.
@@ -234,23 +253,30 @@ usam a API. Em cada etapa:
 Num vídeo de 15 minutos são umas 10 rodadas: 1 de títulos, 1 de roteiro (mais uma a cada
 reescrita) e 1 por seção nas cenas. Só o primeiro pedido de cenas é longo, porque leva o roteiro
 inteiro; os seguintes são curtos e vão **na mesma conversa** (o arquivo avisa). Se abrir uma
-conversa nova, use o `_pedido_completo.txt` da seção. O pedido é texto comum, então também funciona
-em outros chats.
+conversa nova, use o `_pedido_completo.txt` da seção.
 
-A **animação** (`animar`, e o botão "Localizar partes" do editor) sempre usa a API. Sem chave
-nenhuma, use `animacao2d animar cena01 "braço, olho" --sem-ia` e posicione as partes no editor.
-Para um projeto em modo manual usar a API no texto, passe `--api`.
+**Onde está cada parte** (na animação): uma rodada por cena, com a imagem anexada. Pelo editor é
+mais rápido (botões Copiar imagem / Copiar pedido / Usar resposta, veja o passo 5). Pelo terminal,
+`animacao2d animar cena01` mostra qual imagem anexar e lê a resposta colada. As coordenadas vêm em
+milésimos da imagem, então não importa se o claude.ai reduzir a imagem ao receber.
 
-## Custos e modelo
+Dicas:
+- O plano gratuito do claude.ai tem limite de mensagens; se chegar nele, é só continuar mais tarde,
+  pois tudo fica salvo no projeto.
+- Use uma conversa nova para cada imagem: conversas longas com muitas imagens gastam o limite mais
+  rápido.
+- Os pedidos são texto comum, então funcionam também em outros chats.
+- Se um dia quiser automatizar, `ANIMACAO2D_IA=api` + `ANTHROPIC_API_KEY` no `.env` faz tudo
+  sozinho. Dá para misturar: `--api` num comando específico.
 
-- **Modo manual** (padrão do `.env.exemplo`): o texto não custa nada de API. A animação custa em
-  torno de US$ 0,05 por cena com `claude-opus-5` (cerca de US$ 9 para ~180 cenas). A IA só é
-  chamada na primeira vez de cada cena; renderizar de novo é grátis.
-- **Tudo pela API**: some cerca de US$ 1–3 por vídeo para títulos, roteiro e cenas.
-- Os valores são estimativas. Para baratear a animação, teste `ANIMACAO2D_MODELO_VISAO=claude-sonnet-5`.
-- A assinatura do claude.ai (Pro/Max) não inclui créditos de API: são cobranças separadas. As chamadas usam cache de prompt e, se
-o modelo recusar um pedido por engano, a API refaz automaticamente com um modelo substituto
-(`fallbacks`).
+## Custos
+
+- **Modo grátis:** R$ 0. Você só precisa de uma conta no claude.ai (o plano gratuito serve) e do
+  gerador de imagens que escolher.
+- **API (opcional):** paga por uso, à parte da assinatura do claude.ai. Estimativa com o modelo
+  padrão `claude-opus-5`: US$ 1–3 por vídeo para títulos, roteiro e cenas, mais uns US$ 0,05 por
+  cena na localização das partes. As chamadas usam cache de prompt e, se o modelo recusar um pedido
+  por engano, a API refaz automaticamente com um modelo substituto (`fallbacks`).
 
 ## Dicas para as animações ficarem boas
 
@@ -297,7 +323,8 @@ pytest
 
 ## Problemas comuns
 
-- **"Não consegui acessar a API"**: falta o `.env` com `ANTHROPIC_API_KEY` (ou use `--manual`).
+- **"Não consegui acessar a API"**: você pôs `ANIMACAO2D_IA=api` sem chave. Tire essa linha (ou use
+  `--manual`) para o modo grátis.
 - **Acentos estranhos no `prompts.csv`**: abra pelo Excel normalmente (o arquivo tem BOM UTF-8);
   no Google Sheets use Arquivo → Importar.
 - **Editor não abre**: acesse o endereço que aparece no terminal (ex.: `http://127.0.0.1:8765/`);

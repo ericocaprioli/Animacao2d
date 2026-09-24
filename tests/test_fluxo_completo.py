@@ -109,6 +109,18 @@ def test_editor_api(ambiente_isolado, imagem_exemplo):
         assert mascaras["modos"]["braço levantado"] == "auto"
         render = pedir("/api/cena/cena01/renderizar", {"spec": spec, "previa": True})
         assert render["video_url"].startswith("/arquivo/video/cena01")
+        assert estado["modo_ia"] == "manual"  # sem chave de API: grátis
+        texto = pedir("/api/cena/cena01/pedido_manual", {"pedido": "sol"})["texto"]
+        assert "MILÉSIMOS" in texto and "cena01.png" in texto
+        resposta = {"partes": [{"nome": "sol", "animacoes": ["girar"], "caixa": [780, 43, 924, 300],
+                                "pivo": [852, 172], "direcao": "", "observacao": ""}],
+                    "nao_encontrados": [], "camera": "zoom_in"}
+        r = pedir("/api/cena/cena01/resposta_manual", {"texto": "```json\n" + json.dumps(resposta) + "\n```",
+                                                       "pedido": "sol", "duracao": 1.0})
+        assert [round(v) for v in r["spec"]["partes"][0]["caixa"]] == [1136, 35, 1345, 245]
+        assert len(pedir("/api/cena/cena01")["spec"]["partes"]) == 1  # gravado
+        with pytest.raises(urllib.error.HTTPError):
+            pedir("/api/cena/cena01/detectar", {"pedido": "sol"})  # modo grátis não usa a API
         with pytest.raises(urllib.error.HTTPError):
             pedir("/api/cena/nao-existe")
     finally:
@@ -116,32 +128,34 @@ def test_editor_api(ambiente_isolado, imagem_exemplo):
         servidor.server_close()
 
 
-def test_texto_manual_e_animacao_pela_api(api, ambiente_isolado, monkeypatch, imagem_exemplo):
-    """ANIMACAO2D_TEXTO=manual: títulos/roteiro/cenas por copiar-colar; só a animação chama a API."""
+def _usuario_do_claude_ai(colando: list[str], vistos: list[str]):
+    """Simula você: lê o pedido gerado, "pergunta ao claude.ai" e cola a resposta no terminal."""
     from pathlib import Path
 
-    from servidor_falso import resposta_cenas, resposta_roteiro, resposta_titulos
-
-    monkeypatch.setenv("ANIMACAO2D_TEXTO", "manual")
-    colando: list[str] = []
-    pedidos_vistos: list[str] = []
+    from servidor_falso import resposta_cenas, resposta_deteccao, resposta_roteiro, resposta_titulos
 
     def usuario(pergunta=""):
         if colando:
             return colando.pop(0)
-        if pergunta.strip() == ">":  # hora de colar a resposta do claude.ai
+        if pergunta.strip() == ">":
             arquivo = max(Path("projetos").glob("**/_manual/*_pedido.txt"), key=lambda a: a.stat().st_mtime_ns)
             texto = arquivo.read_text(encoding="utf-8")
-            pedidos_vistos.append(arquivo.name)
+            vistos.append(arquivo.name)
             falso = {"messages": [{"content": [{"text": texto}]}]}
             if arquivo.name.startswith("titulos"):
                 dados = resposta_titulos(falso)
             elif arquivo.name.startswith("roteiro"):
                 dados = resposta_roteiro(falso)
+            elif arquivo.name.startswith("animar"):
+                dados = resposta_deteccao(falso)  # em pixels da imagem de exemplo (1456x816) -> milésimos
+                for parte in dados["partes"]:
+                    x0, y0, x1, y1 = parte["caixa"]
+                    parte["caixa"] = [x0 * 1000 / 1456, y0 * 1000 / 816, x1 * 1000 / 1456, y1 * 1000 / 816]
+                    parte["pivo"] = [parte["pivo"][0] * 1000 / 1456, parte["pivo"][1] * 1000 / 816]
             else:
                 dados = resposta_cenas(falso)
-            colando.extend(["Claro! Aqui está:", "", "```json", *json.dumps(dados, ensure_ascii=False, indent=2).split("\n"),
-                            "```", ""])
+            colando.extend(["Claro! Aqui está:", "", "```json",
+                            *json.dumps(dados, ensure_ascii=False, indent=2).split("\n"), "```", ""])
             return colando.pop(0)
         if "Escolha o número" in pergunta:
             return "1"
@@ -149,19 +163,53 @@ def test_texto_manual_e_animacao_pela_api(api, ambiente_isolado, monkeypatch, im
             return "a"
         return ""
 
-    monkeypatch.setattr("builtins.input", usuario)
+    return usuario
+
+
+def test_tudo_gratis_sem_api(api, ambiente_isolado, monkeypatch, imagem_exemplo):
+    """ANIMACAO2D_IA=manual: títulos, roteiro, cenas E localização das partes por copiar/colar; zero API."""
+    monkeypatch.setenv("ANIMACAO2D_IA", "manual")
+    vistos: list[str] = []
+    monkeypatch.setattr("builtins.input", _usuario_do_claude_ai([], vistos))
     assert cli.main(["novo", "como funciona a internet", "--minutos", "3"]) == 0
-    assert api.pedidos == []  # nada de texto passou pela API
-    assert pedidos_vistos[:2] == ["titulos_pedido.txt", "roteiro_pedido.txt"]
-    assert [n for n in pedidos_vistos if n.startswith("cenas")] == [f"cenas_secao{i:02d}_pedido.txt" for i in (1, 2, 3, 4)]
+    assert vistos[:2] == ["titulos_pedido.txt", "roteiro_pedido.txt"]
+    assert [n for n in vistos if n.startswith("cenas")] == [f"cenas_secao{i:02d}_pedido.txt" for i in (1, 2, 3, 4)]
 
     projeto = Projeto.resolver()
-    assert projeto.dados["texto_manual"] is True
+    assert projeto.dados["ia_manual"] is True
     segundo = (projeto.pasta / "_manual" / "cenas_secao02_pedido.txt").read_text(encoding="utf-8")
     assert "MESMA conversa" in segundo  # só o primeiro pedido de cenas leva o roteiro inteiro
     assert len(json.loads(projeto.cenas_json.read_text(encoding="utf-8"))["cenas"]) > 10
 
     shutil.copy(imagem_exemplo, projeto.pasta_imagens / "cena01.png")
     assert cli.main(["animar", "cena01", "--previa", "--duracao", "1"]) == 0
-    assert len(api.pedidos) == 1 and "localiza" in api.pedidos[0]["system"][0]["text"]
+    assert vistos[-1] == "animar_cena01_pedido.txt"
+    spec = json.loads(projeto.spec_da_cena(1).read_text(encoding="utf-8"))
+    assert [round(v) for v in spec["partes"][0]["caixa"]] == [348, 190, 478, 385]  # milésimos -> pixels
     assert projeto.video_da_cena(1).is_file()
+    assert api.pedidos == []  # nada passou pela API
+
+
+def test_projeto_gratis_pode_usar_api_na_animacao(api, ambiente_isolado, monkeypatch, imagem_exemplo):
+    projeto = Projeto.criar("Híbrido")
+    projeto.dados["ia_manual"] = True
+    projeto.salvar()
+    shutil.copy(imagem_exemplo, projeto.pasta_imagens / "cena01.png")
+    assert cli.main(["animar", "cena01", "braço, olho", "--api", "--previa", "--duracao", "1"]) == 0
+    assert len(api.pedidos) == 1 and "localiza" in api.pedidos[0]["system"][0]["text"]
+
+
+def test_editor_abre_com_caixas_do_plano(ambiente_isolado, imagem_exemplo):
+    from animacao2d.editor.servidor import Editor
+
+    projeto = Projeto.criar("Plano")
+    cena = {"numero": 1, "id": "cena01", "duracao": 2.0, "camera": "zoom_rapido", "descricao": "",
+            "animacoes": [{"elemento": "braço do DEV", "animacao": "acenar"}, {"elemento": "olhos", "animacao": "piscar"}]}
+    projeto.cenas_json.write_text(json.dumps({"cenas": [cena]}), encoding="utf-8")
+    shutil.copy(imagem_exemplo, projeto.pasta_imagens / "cena01.png")
+    dados = Editor(projeto=projeto).dados_cena("cena01")
+    assert dados["provisorio"] and not dados["salvo"]
+    assert [(p["nome"], p["animacoes"]) for p in dados["spec"]["partes"]] == [("braço do DEV", ["acenar"]),
+                                                                             ("olhos", ["piscar"])]
+    assert dados["spec"]["camera"]["movimento"] == "zoom_rapido"
+    assert not projeto.spec_da_cena(1).exists()  # só grava quando você salvar

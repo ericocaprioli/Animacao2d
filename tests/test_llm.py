@@ -58,10 +58,16 @@ def test_modo_manual_por_arquivo(tmp_path, monkeypatch):
     assert "REGRAS" in pedido and "TAREFA" in pedido and "JSON Schema" in pedido
 
 
-def test_manual_nao_faz_visao(tmp_path):
-    with pytest.raises(ErroIA):
-        ManualIA(tmp_path, abrir_arquivo=False).gerar_json(tarefa="d", sistema="s", conteudo="x", schema=SCHEMA,
-                                                           visao=True)
+def test_modo_ia_padrao(monkeypatch):
+    from animacao2d.llm import modo_ia
+
+    for variavel in ("ANIMACAO2D_IA", "ANIMACAO2D_TEXTO", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(variavel, raising=False)
+    assert modo_ia() == "manual"  # sem chave: grátis
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-teste")
+    assert modo_ia() == "api"
+    monkeypatch.setenv("ANIMACAO2D_IA", "manual")
+    assert modo_ia() == "manual"  # o .env manda
 
 
 def _colar(monkeypatch, linhas):
@@ -104,3 +110,19 @@ def test_modo_manual_continuacao_na_mesma_conversa(tmp_path, monkeypatch):
     assert "MESMA conversa" in segundo and "SEÇÃO 2" in segundo
     assert "ROTEIRO INTEIRO" not in segundo and "REGRAS" not in segundo
     assert (tmp_path / "_manual" / "cenas_secao02_pedido_completo.txt").is_file()
+
+
+def test_modo_manual_localizar_partes_pede_para_anexar_imagem(tmp_path, monkeypatch, capsys, imagem_exemplo):
+    from animacao2d.animacao.detectar import detectar_partes
+
+    resposta = {"partes": [{"nome": "sol", "animacoes": ["girar"], "caixa": [780, 43, 924, 300], "pivo": [852, 172],
+                            "direcao": "", "observacao": ""}], "nao_encontrados": ["foguete"], "camera": "zoom_in"}
+    _colar(monkeypatch, [json.dumps(resposta), ""])
+    partes, faltando, camera = detectar_partes(ManualIA(tmp_path, abrir_arquivo=False), imagem_exemplo, "sol, foguete")
+    saida = capsys.readouterr().out
+    assert "anexe a imagem" in saida and "cena01.png" in saida
+    pedido = (tmp_path / "_manual" / "animar_cena01_pedido.txt").read_text(encoding="utf-8")
+    assert "MILÉSIMOS" in pedido and "1456x816" in pedido
+    # milésimos -> pixels da imagem original (1456x816)
+    assert [round(v) for v in partes[0].caixa] == [1136, 35, 1345, 245]
+    assert faltando == ["foguete"] and camera == "zoom_in"

@@ -93,7 +93,8 @@ class ClienteIA:
 
     def gerar_json(self, *, tarefa: str, sistema: str, conteudo: list[dict] | str, schema: dict,
                    esforco: str = "high", max_tokens: int = 64000, visao: bool = False,
-                   mensagem: str = "Pensando") -> dict:
+                   mensagem: str = "Pensando", anexos: list[Path] | None = None) -> dict:
+        """Pede um JSON no formato `schema`. `anexos`: arquivos que o modo manual pede para anexar."""
         raise NotImplementedError
 
 
@@ -117,7 +118,7 @@ class ClaudeIA(ClienteIA):
 
     def gerar_json(self, *, tarefa: str, sistema: str, conteudo: list[dict] | str, schema: dict,
                    esforco: str = "high", max_tokens: int = 64000, visao: bool = False,
-                   mensagem: str = "Pensando") -> dict:
+                   mensagem: str = "Pensando", anexos: list[Path] | None = None) -> dict:
         anthropic = self._anthropic
         modelo = self.modelo_visao if visao else self.modelo
         blocos = [bloco_texto(conteudo)] if isinstance(conteudo, str) else conteudo
@@ -176,16 +177,17 @@ class ClaudeIA(ClienteIA):
 
 
 class ManualIA(ClienteIA):
-    """Sem API: você cola o pedido no claude.ai (ou em outro chat) e cola a resposta de volta.
+    """Grátis, sem API: você cola o pedido no claude.ai (ou em outro chat) e cola a resposta de volta.
 
     - o pedido é gravado em _manual/<etapa>_pedido.txt e aberto automaticamente;
+    - para localizar partes numa imagem, o programa indica qual imagem anexar na conversa;
     - a resposta pode ser colada direto no terminal (ou salva em _manual/<etapa>_resposta.json);
     - pedidos seguidos com o mesmo contexto (as seções das cenas) viram pedidos curtos
       para colar na MESMA conversa, sem repetir o roteiro inteiro.
     """
 
     nome = "manual"
-    aceita_imagem = False
+    aceita_imagem = False  # a imagem não vai no texto: você anexa o arquivo na conversa
 
     def __init__(self, pasta: str | Path, abrir_arquivo: bool | None = None):
         self.pasta = Path(pasta) / "_manual"
@@ -197,10 +199,7 @@ class ManualIA(ClienteIA):
 
     def gerar_json(self, *, tarefa: str, sistema: str, conteudo: list[dict] | str, schema: dict,
                    esforco: str = "high", max_tokens: int = 64000, visao: bool = False,
-                   mensagem: str = "Pensando") -> dict:
-        if visao:
-            raise ErroIA("O modo manual não localiza partes na imagem: a animação usa a API "
-                         "(ou use --sem-ia e posicione as partes no editor).")
+                   mensagem: str = "Pensando", anexos: list[Path] | None = None) -> dict:
         blocos = [bloco_texto(conteudo)] if isinstance(conteudo, str) else conteudo
         fixos = tuple(b["text"] for b in blocos if b.get("type") == "text" and b.get("cache_control"))
         variaveis = [b for b in blocos if not b.get("cache_control")]
@@ -221,10 +220,19 @@ class ManualIA(ClienteIA):
 
         print(f"\n[modo manual] {mensagem}")
         onde = "na MESMA conversa do pedido anterior" if continuacao else "numa conversa NOVA"
-        print(f"  1. Copie todo o texto de {pedido} (Ctrl+A, Ctrl+C) e cole {onde} do claude.ai")
-        print("  2. Copie a resposta (o bloco JSON) e cole aqui embaixo. Depois aperte Enter numa linha vazia.")
+        passo = 1
+        if anexos:
+            nomes = ", ".join(str(a) for a in anexos)
+            print(f"  {passo}. Numa conversa NOVA do claude.ai, anexe a imagem: {nomes}")
+            print("     (arraste o arquivo para a caixa de mensagem ou use o clipe de anexar)")
+            onde = "na mesma mensagem"
+            passo += 1
+        print(f"  {passo}. Copie todo o texto de {pedido} (Ctrl+A, Ctrl+C) e cole {onde}. Envie.")
+        print(f"  {passo + 1}. Copie a resposta (o bloco JSON) e cole aqui embaixo. Depois aperte Enter numa linha vazia.")
         print(f"     (ou salve a resposta em {resposta} e aperte Enter; 'c' cancela)")
         if self.abrir_arquivo:
+            for anexo in anexos or []:
+                _mostrar_no_explorador(anexo)
             _abrir_no_sistema(pedido)
         return self._ler_resposta(resposta, schema)
 
@@ -301,16 +309,42 @@ def _abrir_no_sistema(caminho: Path) -> None:
         pass
 
 
+def _mostrar_no_explorador(caminho: Path) -> None:
+    """Abre a pasta com o arquivo selecionado, para arrastar para o claude.ai (melhor esforço)."""
+    try:
+        if sys.platform.startswith("win"):
+            subprocess.Popen(["explorer", "/select,", str(Path(caminho).resolve())])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(caminho)])
+        else:
+            subprocess.Popen(["xdg-open", str(Path(caminho).resolve().parent)], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    except (OSError, ValueError):
+        pass
+
+
 def _mensagem_sem_chave() -> str:
     return (
-        "Não consegui acessar a API da Anthropic. Crie um arquivo .env com ANTHROPIC_API_KEY=... "
-        "(veja .env.exemplo) ou rode com --manual para copiar e colar os pedidos no claude.ai."
+        "Não consegui acessar a API da Anthropic. Para usar tudo de graça (copiando e colando no claude.ai), "
+        "ponha ANIMACAO2D_IA=manual no .env ou rode com --manual. Para usar a API, ponha "
+        "ANTHROPIC_API_KEY=... no .env (veja .env.exemplo)."
     )
 
 
-def texto_manual_padrao() -> bool:
-    """ANIMACAO2D_TEXTO=manual no .env: títulos, roteiro e cenas sempre no modo manual."""
-    return os.environ.get("ANIMACAO2D_TEXTO", "").strip().lower() == "manual"
+def modo_ia() -> str:
+    """"manual" (grátis: copiar/colar no claude.ai) ou "api".
+
+    ANIMACAO2D_IA=manual|api no .env decide. Sem essa linha: API se houver chave, senão manual.
+    """
+    valor = os.environ.get("ANIMACAO2D_IA", "").strip().lower()
+    if valor in ("manual", "gratis", "grátis"):
+        return "manual"
+    if valor == "api":
+        return "api"
+    if os.environ.get("ANIMACAO2D_TEXTO", "").strip().lower() == "manual":
+        return "manual"
+    tem_chave = any(os.environ.get(v, "").strip() for v in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
+    return "api" if tem_chave else "manual"
 
 
 def criar_cliente(manual: bool = False, pasta: str | Path = ".") -> ClienteIA:

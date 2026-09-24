@@ -19,7 +19,7 @@ from animacao2d import __version__, config
 from animacao2d.animacao.catalogo import ANIMACOES, CAMERAS, resolver_camera
 from animacao2d.animacao.imagem import EXTENSOES
 from animacao2d.animacao.spec import ErroSpec
-from animacao2d.llm import ClienteIA, ErroIA, criar_cliente, texto_manual_padrao
+from animacao2d.llm import ClienteIA, ErroIA, criar_cliente, modo_ia
 from animacao2d.projeto import ErroProjeto, Projeto
 from animacao2d.roteiro import palavras_alvo
 from animacao2d.util import (configurar_console, formatar_tempo, nome_cena, numero_cena, perguntar, salvar_json,
@@ -27,9 +27,11 @@ from animacao2d.util import (configurar_console, formatar_tempo, nome_cena, nume
 
 
 def _ia(args, pasta: Path | str = ".", projeto: Projeto | None = None) -> ClienteIA:
-    """IA para texto (títulos, roteiro, cenas): manual se pedido por --manual, pelo projeto ou pelo .env."""
-    manual = bool(getattr(args, "manual", False)) or texto_manual_padrao()
-    if projeto is not None and projeto.dados.get("texto_manual"):
+    """Manual (grátis, copiar/colar no claude.ai) ou API: --manual/--api, o projeto ou o .env decidem."""
+    manual = modo_ia() == "manual"
+    if projeto is not None and (projeto.dados.get("ia_manual") or projeto.dados.get("texto_manual")):
+        manual = True
+    if getattr(args, "manual", False):
         manual = True
     if getattr(args, "api", False):
         manual = False
@@ -127,7 +129,7 @@ def cmd_novo(args) -> int:
     ia = _ia(args, config.pasta_projetos() / "_novo")
     titulo, sugestoes = (args.titulo, []) if args.titulo else _escolher_titulo(ia, args.tema, args.quantidade)
     projeto = Projeto.criar(titulo, args.tema, minutos=args.minutos, ritmo=args.ritmo)
-    projeto.dados["texto_manual"] = ia.nome == "manual"
+    projeto.dados["ia_manual"] = ia.nome == "manual"
     projeto.salvar()
     if sugestoes:
         salvar_json(projeto.titulos_json, {"tema": args.tema, "escolhido": titulo, "titulos": sugestoes})
@@ -206,14 +208,18 @@ def cmd_animar(args) -> int:
 
     camera = resolver_camera(args.camera) if args.camera else None
     alvos: list[AlvoCena] = []
+    pasta_ia: Path = Path(".")
+    projeto_ia: Projeto | None = None
     if args.alvo and Path(args.alvo).suffix.lower() in EXTENSOES:
         imagem = Path(args.alvo)
         if not imagem.is_file():
             print(f"Imagem não encontrada: {imagem}")
             return 1
         alvos.append(AlvoCena.avulso(imagem))
+        pasta_ia = imagem.parent
     else:
         projeto = Projeto.resolver(args.projeto)
+        pasta_ia, projeto_ia = projeto.pasta, projeto
         if args.todas:
             numeros = sorted(projeto.imagens())
             if not numeros:
@@ -243,7 +249,7 @@ def cmd_animar(args) -> int:
         for a in alvos)
     if precisa_ia:
         try:
-            ia = criar_cliente(manual=False)  # a animação sempre usa a API (visão)
+            ia = _ia(args, pasta_ia, projeto_ia)
         except ErroIA as erro:
             print(f"{erro}\nContinuando sem IA (caixas provisórias).")
     falhas = []
@@ -426,6 +432,7 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--sem-ia", action="store_true", help="não usa IA: cria caixas para ajustar no editor")
     s.add_argument("--previa", action="store_true", help="vídeo menor e mais rápido, para conferir")
     s.add_argument("--forcar", action="store_true", help="com --todas, refaz até as já animadas")
+    com_manual(s)
     s.set_defaults(funcao=cmd_animar)
 
     s = sub.add_parser("editor", help="abre o editor visual no navegador")

@@ -23,8 +23,9 @@ from animacao2d.animacao.imagem import EXTENSOES, aviso_proporcao, salvar_rgb, t
 from animacao2d.animacao.render import RenderizadorCena
 from animacao2d.animacao.spec import DIRECOES, MASCARAS, Camera, ErroSpec, SpecCena
 from animacao2d.cenas import pedido_de_animacao
-from animacao2d.fluxo import AlvoCena, caminho_relativo, preparar_spec, renderizar_alvo
-from animacao2d.llm import ClienteIA, ErroIA, criar_cliente
+from animacao2d.animacao.detectar import partes_provisorias, pedido_manual_deteccao, resposta_manual_deteccao
+from animacao2d.fluxo import AlvoCena, caminho_relativo, preparar_spec, renderizar_alvo, salvar_nova_spec
+from animacao2d.llm import ClienteIA, ErroIA, criar_cliente, modo_ia
 from animacao2d.projeto import Projeto
 from animacao2d.util import nome_cena
 
@@ -39,6 +40,9 @@ class Editor:
             raise ValueError("Informe um projeto ou uma pasta de imagens.")
         self.projeto = projeto
         self.pasta = pasta_avulsa
+        # grátis (copiar/colar no claude.ai) ou API
+        self.manual = modo_ia() == "manual" or bool(
+            projeto is not None and (projeto.dados.get("ia_manual") or projeto.dados.get("texto_manual")))
         self._ia: ClienteIA | None = None
         self._travas: dict[str, threading.Lock] = {}
         self._trava_geral = threading.Lock()
@@ -96,6 +100,7 @@ class Editor:
     def dados_cena(self, identificador: str) -> dict[str, Any]:
         alvo = self.alvo(identificador)
         largura, altura = tamanho_imagem(alvo.imagem)
+        provisorio = False
         if alvo.spec.is_file():
             spec = SpecCena.carregar(alvo.spec)
             spec.ajustar_tamanho(largura, altura)
@@ -105,11 +110,16 @@ class Editor:
             spec = SpecCena(imagem=alvo.imagem.name, largura=largura, altura=altura,
                             duracao=float(planejada.get("duracao") or 5.0),
                             camera=Camera(movimento=planejada.get("camera") or "zoom_in"), cena=alvo.numero)
+            pedido = pedido_de_animacao(planejada)
+            if pedido:  # já traz as partes planejadas como caixas para arrastar até o lugar certo
+                spec.partes = partes_provisorias(pedido, largura, altura)
+                provisorio = True
             salvo = False
         return {
             "id": identificador,
             "spec": spec.para_dict(),
             "salvo": salvo,
+            "provisorio": provisorio,
             "largura": largura,
             "altura": altura,
             "imagem_url": f"/arquivo/imagem/{identificador}?v={int(alvo.imagem.stat().st_mtime)}",
@@ -211,6 +221,7 @@ def criar_tratador(editor: Editor):
                 elif caminho == "/api/estado":
                     titulo = editor.projeto.titulo if editor.projeto else str(editor.pasta)
                     self._json({"modo": "projeto" if editor.projeto else "pasta", "titulo": titulo,
+                                "modo_ia": "manual" if editor.manual else "api",
                                 "cenas": editor.cenas(), "catalogo": catalogo()})
                 elif caminho.startswith("/api/cena/"):
                     self._json(editor.dados_cena(caminho.split("/")[3]))
@@ -245,7 +256,29 @@ def criar_tratador(editor: Editor):
                     if acao == "salvar":
                         editor.salvar_spec(identificador, corpo["spec"])
                         self._json({"ok": True})
+                    elif acao == "pedido_manual":
+                        alvo = editor.alvo(identificador)
+                        pedido = (corpo.get("pedido") or "").strip() or pedido_de_animacao(alvo.planejada or {})
+                        if not pedido:
+                            self._erro("Escreva o que animar (ex.: braço, olho, sol).")
+                            return
+                        contexto = (alvo.planejada or {}).get("descricao", "")
+                        self._json({"ok": True, "texto": pedido_manual_deteccao(alvo.imagem, pedido, contexto)})
+                    elif acao == "resposta_manual":
+                        alvo = editor.alvo(identificador)
+                        partes, nao_achados, camera = resposta_manual_deteccao(corpo.get("texto", ""), alvo.imagem)
+                        if not partes:
+                            self._erro("A resposta não trouxe nenhuma parte. Confira se a imagem foi anexada.")
+                            return
+                        planejada = alvo.planejada or {}
+                        duracao = float(corpo.get("duracao") or planejada.get("duracao") or 5.0)
+                        spec = salvar_nova_spec(alvo, partes, duracao, planejada.get("camera") or camera,
+                                                (corpo.get("pedido") or "").strip())
+                        self._json({"ok": True, "spec": spec.para_dict(), "nao_encontrados": nao_achados})
                     elif acao == "detectar":
+                        if editor.manual:
+                            self._erro("Modo grátis: use Copiar imagem / Copiar pedido e cole a resposta do claude.ai.")
+                            return
                         alvo = editor.alvo(identificador)
                         pedido = (corpo.get("pedido") or "").strip() or pedido_de_animacao(alvo.planejada or {})
                         if not pedido:

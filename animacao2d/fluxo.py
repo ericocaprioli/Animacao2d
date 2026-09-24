@@ -168,9 +168,14 @@ def preparar_spec(alvo: AlvoCena, ia: ClienteIA | None, pedido: str = "", duraca
                 camera_final = camera_sugerida
             if nao_achados:
                 avisar(f"Não encontrei na imagem: {', '.join(nao_achados)}")
+    return salvar_nova_spec(alvo, partes, duracao_final, camera_final, pedido)
+
+
+def salvar_nova_spec(alvo: AlvoCena, partes: list, duracao: float, camera: str, pedido: str = "") -> SpecCena:
+    """Cria e grava os ajustes da cena (guarda o anterior em .json.bak)."""
     if alvo.spec.is_file():
         shutil.copy2(alvo.spec, alvo.spec.with_suffix(".json.bak"))
-    spec = nova_spec(alvo.imagem, partes, duracao_final, camera_final, alvo.numero, caminho_relativo(alvo.imagem, alvo.spec))
+    spec = nova_spec(alvo.imagem, partes, duracao, camera, alvo.numero, caminho_relativo(alvo.imagem, alvo.spec))
     spec.observacao = f"pedido: {pedido}" if pedido else ""
     spec.salvar(alvo.spec)
     return spec

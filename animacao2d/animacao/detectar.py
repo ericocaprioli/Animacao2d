@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from animacao2d.animacao.catalogo import ANIMACOES, CAMERAS, texto_cameras, texto_catalogo
-from animacao2d.animacao.imagem import carregar_rgb
+from animacao2d.animacao.imagem import carregar_rgb, tamanho_imagem
 from animacao2d.animacao.pedido import ItemPedido, interpretar_pedido
 from animacao2d.animacao.spec import Camera, Parte, SpecCena
 from animacao2d.llm import ClienteIA, bloco_imagem, bloco_texto
@@ -45,14 +45,24 @@ SCHEMA_DETECCAO = {
     "additionalProperties": False,
 }
 
-SISTEMA_DETECCAO = f"""Você localiza partes de ilustrações 2D (estilo desenho animado chapado) para um programa \
+_COORDENADAS = {
+    "pixels": "em pixels da imagem recebida (origem no canto superior esquerdo, x para a direita, y para baixo).",
+    "milesimos": ("em MILÉSIMOS da imagem, não em pixels: x vai de 0 (borda esquerda) a 1000 (borda direita) e "
+                  "y de 0 (topo) a 1000 (base), seja qual for o tamanho da imagem. Ex.: o centro da imagem é "
+                  "[500, 500]."),
+}
+
+
+def sistema_deteccao(unidade: str = "pixels") -> str:
+    """Instruções de localização. unidade: "pixels" (API) ou "milesimos" (modo manual)."""
+    coordenadas = _COORDENADAS[unidade]
+    return f"""Você localiza partes de ilustrações 2D (estilo desenho animado chapado) para um programa \
 que anima cada parte automaticamente. Você recebe a imagem e a lista de elementos que o usuário quer animar.
 
 Para cada elemento, devolva:
-- caixa: [x0, y0, x1, y1] em pixels da imagem recebida (origem no canto superior esquerdo, x para a direita, \
-y para baixo). A caixa deve conter o elemento INTEIRO, incluindo o contorno preto, e o mínimo possível de outras \
-coisas. Seja preciso: o recorte é feito a partir dessa caixa.
-- pivo: [x, y] ponto de articulação/rotação, também em pixels.
+- caixa: [x0, y0, x1, y1] {coordenadas} A caixa deve conter o elemento INTEIRO, incluindo o contorno \
+preto, e o mínimo possível de outras coisas. Seja preciso: o recorte é feito a partir dessa caixa.
+- pivo: [x, y] ponto de articulação/rotação, na mesma unidade da caixa.
 - animacoes: as que o usuário pediu para aquele elemento; se ele não disse, escolha a mais natural do catálogo.
 - direcao: só para "deslizar" (direita, esquerda, cima, baixo) ou "girar" (horario, antihorario); senão "".
 - observacao: uma frase curta se algo merecer atenção (ou "").
@@ -81,6 +91,9 @@ Movimentos de câmera:
 """
 
 
+SISTEMA_DETECCAO = sistema_deteccao("pixels")
+
+
 def _imagem_para_envio(rgb: np.ndarray) -> tuple[np.ndarray, float]:
     altura, largura = rgb.shape[:2]
     fator = min(1.0, LADO_MAXIMO_ENVIO / max(largura, altura))
@@ -89,11 +102,12 @@ def _imagem_para_envio(rgb: np.ndarray) -> tuple[np.ndarray, float]:
     return rgb, fator
 
 
-def _parte_da_resposta(item: dict, fator: float, largura: int, altura: int) -> Parte | None:
+def _parte_da_resposta(item: dict, fx: float, fy: float, largura: int, altura: int) -> Parte | None:
     caixa = item.get("caixa") or []
     if len(caixa) != 4 or not item.get("animacoes"):
         return None
-    x0, y0, x1, y1 = (float(v) / fator for v in caixa)
+    x0, x1 = float(caixa[0]) / fx, float(caixa[2]) / fx
+    y0, y1 = float(caixa[1]) / fy, float(caixa[3]) / fy
     x0, x1 = sorted((float(np.clip(x0, 0, largura)), float(np.clip(x1, 0, largura))))
     y0, y1 = sorted((float(np.clip(y0, 0, altura)), float(np.clip(y1, 0, altura))))
     if x1 - x0 < 2 or y1 - y0 < 2:
@@ -101,7 +115,7 @@ def _parte_da_resposta(item: dict, fator: float, largura: int, altura: int) -> P
     animacoes = [a for a in item["animacoes"] if a in ANIMACOES]
     pivo = None
     if len(item.get("pivo") or []) == 2:
-        px, py = (float(v) / fator for v in item["pivo"])
+        px, py = float(item["pivo"][0]) / fx, float(item["pivo"][1]) / fy
         folga_x, folga_y = 0.35 * (x1 - x0) + 4, 0.35 * (y1 - y0) + 4
         if any(ANIMACOES[a].pivo == "manual" or a == "balancar" for a in animacoes):
             # articulação: pode ficar na borda da caixa, mas não longe dela
@@ -123,25 +137,78 @@ def _parte_da_resposta(item: dict, fator: float, largura: int, altura: int) -> P
     )
 
 
+def _texto_pedido(pedido: str, contexto: str, cabecalho: str) -> tuple[str, list[ItemPedido]]:
+    itens = interpretar_pedido(pedido)
+    lista = "\n".join(f"- {item.texto()}" for item in itens) or f"- {pedido}"
+    texto = f"{cabecalho}\n\nPedido original do usuário: {pedido}\n\nElementos para animar:\n{lista}"
+    if contexto:
+        texto += f"\n\nContexto da cena (do roteiro): {contexto}"
+    return texto, itens
+
+
+def _cabecalho_manual(imagem: Path, largura: int, altura: int) -> str:
+    return (f"A imagem anexada é {imagem.name} ({largura}x{altura} pixels). Responda as coordenadas em "
+            "MILÉSIMOS (0 a 1000), não em pixels.")
+
+
+def interpretar_resposta(dados: dict, largura: int, altura: int, fx: float, fy: float
+                         ) -> tuple[list[Parte], list[str], str]:
+    """JSON de localização -> (partes em pixels da imagem original, não encontrados, câmera)."""
+    partes = [p for p in (_parte_da_resposta(item, fx, fy, largura, altura) for item in dados["partes"]) if p]
+    return partes, list(dados.get("nao_encontrados", [])), dados.get("camera") or "zoom_in"
+
+
+def pedido_manual_deteccao(imagem: str | Path, pedido: str, contexto: str = "") -> str:
+    """Texto completo para colar no claude.ai junto com a imagem (usado pelo editor)."""
+    from animacao2d.llm import _pedido_completo
+
+    imagem = Path(imagem)
+    largura, altura = tamanho_imagem(imagem)
+    texto, _ = _texto_pedido(pedido, contexto, _cabecalho_manual(imagem, largura, altura))
+    return _pedido_completo(sistema_deteccao("milesimos"), [bloco_texto(texto)], SCHEMA_DETECCAO)
+
+
+def resposta_manual_deteccao(texto: str, imagem: str | Path) -> tuple[list[Parte], list[str], str]:
+    """Lê a resposta colada do claude.ai (coordenadas em milésimos)."""
+    from animacao2d.llm import ErroIA, validar_schema
+    from animacao2d.util import extrair_json
+
+    try:
+        dados = extrair_json(texto)
+    except ValueError as erro:
+        raise ErroIA("Não achei um JSON completo na resposta. Copie a resposta inteira do Claude.") from erro
+    erros = validar_schema(dados, SCHEMA_DETECCAO)
+    if erros:
+        raise ErroIA("A resposta não está no formato esperado: " + "; ".join(erros[:4]))
+    largura, altura = tamanho_imagem(imagem)
+    return interpretar_resposta(dados, largura, altura, 1000.0 / largura, 1000.0 / altura)
+
+
 def detectar_partes(ia: ClienteIA, imagem: str | Path, pedido: str, contexto: str = "",
                     rgb: np.ndarray | None = None) -> tuple[list[Parte], list[str], str]:
     """Pergunta à IA onde estão os elementos. Retorna (partes, não encontrados, câmera sugerida)."""
+    imagem = Path(imagem)
+    if not ia.aceita_imagem:
+        # modo manual (grátis): você anexa a imagem no claude.ai; coordenadas em milésimos
+        largura, altura = tamanho_imagem(imagem)
+        texto, itens = _texto_pedido(pedido, contexto, _cabecalho_manual(imagem, largura, altura))
+        dados = ia.gerar_json(
+            tarefa=f"animar_{imagem.stem}", sistema=sistema_deteccao("milesimos"), conteudo=[bloco_texto(texto)],
+            schema=SCHEMA_DETECCAO, visao=True, anexos=[imagem],
+            mensagem=f"Localizar {', '.join(i.elemento for i in itens) or 'partes'} em {imagem.name}",
+        )
+        return interpretar_resposta(dados, largura, altura, 1000.0 / largura, 1000.0 / altura)
+
     original = rgb if rgb is not None else carregar_rgb(imagem)
     altura, largura = original.shape[:2]
     envio, fator = _imagem_para_envio(original)
-    itens = interpretar_pedido(pedido)
-    lista = "\n".join(f"- {item.texto()}" for item in itens) or f"- {pedido}"
-    texto = (f"A imagem tem {envio.shape[1]}x{envio.shape[0]} pixels.\n\n"
-             f"Pedido original do usuário: {pedido}\n\nElementos para animar:\n{lista}")
-    if contexto:
-        texto += f"\n\nContexto da cena (do roteiro): {contexto}"
-    resposta = ia.gerar_json(
+    texto, itens = _texto_pedido(pedido, contexto, f"A imagem tem {envio.shape[1]}x{envio.shape[0]} pixels.")
+    dados = ia.gerar_json(
         tarefa="detectar", sistema=SISTEMA_DETECCAO, conteudo=[bloco_imagem(envio), bloco_texto(texto)],
         schema=SCHEMA_DETECCAO, esforco="medium", max_tokens=16000, visao=True,
         mensagem=f"Localizando {', '.join(i.elemento for i in itens) or 'partes'} na imagem",
     )
-    partes = [p for p in (_parte_da_resposta(item, fator, largura, altura) for item in resposta["partes"]) if p]
-    return partes, list(resposta.get("nao_encontrados", [])), resposta.get("camera") or "zoom_in"
+    return interpretar_resposta(dados, largura, altura, fator, fator)
 
 
 def partes_provisorias(pedido: str | list[ItemPedido], largura: int, altura: int) -> list[Parte]:
